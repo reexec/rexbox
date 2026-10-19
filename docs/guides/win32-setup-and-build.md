@@ -36,6 +36,7 @@ PowerShell 실행 정책이 `.ps1`을 막으면 같은 인자로 `scripts\build_
 .\build\win32_x86\tools\Debug\rexbox_kernel_probe.exe   # "56 check(s), 0 failure(s)", exit code 0
 .\build\win32_x86\tools\Debug\rexbox_dsound_probe.exe   # "48 check(s), 0 failure(s)", exit code 0
 .\build\win32_x86\tools\Debug\rexbox_d3d8_probe.exe     # "163 check(s), 0 failure(s)", exit code 0
+ctest --test-dir build\win32_x86 -C Debug --output-on-failure   # the three probes as the unit tests, in one command (the one CI uses)
 .\build\win32_x86\tools\Debug\rexbox_xbe_info.exe <어떤 default.xbe>   # 헤더, 인증서, 섹션, 커널 import
 python scripts\recomp\xbe_variant.py <어떤 default.xbe>              # MD5와 인증서 신원(타이틀 프로파일용)
 ```
@@ -60,5 +61,5 @@ A standalone build yields the libraries, the tools (`rexbox_xbe_info`, `rexbox_x
 1. **Requirements**: Windows 10/11; Visual Studio 2022 or 2026 with the "Desktop development with C++" workload; CMake 3.20+; Git; Python 3.10+ with `pip install capstone` if a title project will run the recompilation pipeline.
 2. **Get the repository**: `git clone --recurse-submodules https://github.com/reexec/rexbox.git` (or `git submodule update --init` after a plain clone).
 3. **Build**: `.\scripts\build_win32_x86.ps1` for Debug, `-Configuration Release` for Release; `scripts\build_win32_x86.bat` takes the same arguments when the execution policy blocks `.ps1` files. Output goes under `build\win32_x86\`.
-4. **Check**: the three probes print `56 check(s), 0 failure(s)`, `48 check(s), 0 failure(s)` and `163 check(s), 0 failure(s)` and exit 0; `rexbox_xbe_info.exe <default.xbe>` prints an XBE's header, certificate, sections and kernel imports; `python scripts\recomp\xbe_variant.py <default.xbe>` prints its MD5 and certificate identity for a title profile.
+4. **Check**: `ctest --test-dir build\win32_x86 -C Debug --output-on-failure` runs the three probes as the unit tests (the command CI uses); run by hand, the three probes print `56 check(s), 0 failure(s)`, `48 check(s), 0 failure(s)` and `163 check(s), 0 failure(s)` and exit 0; `rexbox_xbe_info.exe <default.xbe>` prints an XBE's header, certificate, sections and kernel imports; `python scripts\recomp\xbe_variant.py <default.xbe>` prints its MD5 and certificate identity for a title profile.
 5. **Compile against another lifter checkout**: configure a second tree with `-DREXBOX_XBOXRECOMP_DIR=<checkout> -DREXBOX_BUILD_TOOLS=OFF` and build the `rexbox_recomp` target.
