@@ -44,10 +44,12 @@ GuestAddress EffectState(const EffectsImage& image, uint32_t index, uint32_t* st
 
 // HRESULT IDirectSound_DownloadEffectsImage(LPDIRECTSOUND pThis, LPCVOID pvImageBuffer,
 //     DWORD dwImageSize, LPCDSEFFECTIMAGELOC pImageLoc, LPDSEFFECTIMAGEDESC* ppImageDesc)
-// and its global form HRESULT XAudioDownloadEffectsImage(LPCVOID pvImageBuffer, DWORD dwImageSize,
-//     LPCDSEFFECTIMAGELOC pImageLoc, LPDSEFFECTIMAGEDESC* ppImageDesc), the one XDK 4531
-// titles call: `first` is the index of pvImageBuffer among the arguments and
-// `pops` the argument count.
+// and the library's method HRESULT CDirectSound_DownloadEffectsImage(CDirectSound* pThis,
+//     LPCVOID pvImageBuffer, DWORD dwImageSize, LPCDSEFFECTIMAGELOC pImageLoc,
+//     LPDSEFFECTIMAGEDESC* ppImageDesc) (stdcall, 5 arguments), which XDK 4531's
+// XAudioDownloadEffectsImage(pszImageName, pImageLoc, dwFlags, ppImageDesc) calls
+// after loading the image file itself (that one stays lifted). `first` is the
+// index of pvImageBuffer among the arguments and `pops` the argument count.
 void DownloadEffectsImage(uint32_t first, uint32_t pops)
 {
     HleCall call;
@@ -145,9 +147,9 @@ void IDirectSound_DownloadEffectsImage()
     DownloadEffectsImage(1, 5);
 }
 
-void XAudioDownloadEffectsImage()
+void CDirectSound_DownloadEffectsImage()
 {
-    DownloadEffectsImage(0, 4);
+    DownloadEffectsImage(1, 5);
 }
 
 // HRESULT IDirectSound_GetEffectData(LPDIRECTSOUND pThis, DWORD dwEffectIndex,
@@ -201,7 +203,7 @@ void IDirectSound_SetEffectData()
 void RegisterEffectsExports(runtime::HleRegistry& registry)
 {
     registry.AddExport("dsound", "IDirectSound_DownloadEffectsImage", &IDirectSound_DownloadEffectsImage);
-    registry.AddExport("dsound", "XAudioDownloadEffectsImage", &XAudioDownloadEffectsImage);
+    registry.AddExport("dsound", "CDirectSound_DownloadEffectsImage", &CDirectSound_DownloadEffectsImage);
     registry.AddExport("dsound", "IDirectSound_GetEffectData", &IDirectSound_GetEffectData);
     registry.AddExport("dsound", "IDirectSound_SetEffectData", &IDirectSound_SetEffectData);
 }

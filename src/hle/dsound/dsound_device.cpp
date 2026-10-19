@@ -246,6 +246,10 @@ void RegisterDeviceExports(runtime::HleRegistry& registry)
     // HRESULT IDirectSound_SetMixBinHeadroom(LPDIRECTSOUND pThis, DWORD dwMixBin, DWORD dwHeadroom):
     // headroom only scales the mixer's output; accepted (XDK 4531 titles call it).
     registry.AddExport("dsound", "IDirectSound_SetMixBinHeadroom", &AcceptSetting<3>);
+    // void DirectSoundUseFullHRTF(void) / DirectSoundUseLightHRTF(void) (cdecl): the HRTF
+    // algorithm of 3D voices, which the mixer does not model; accepted.
+    registry.AddExport("dsound", "DirectSoundUseFullHRTF", &AcceptSetting<0>);
+    registry.AddExport("dsound", "DirectSoundUseLightHRTF", &AcceptSetting<0>);
 }
 
 }  // namespace rexbox::hle::dsound
