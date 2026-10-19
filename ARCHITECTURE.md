@@ -66,7 +66,7 @@ flowchart BT
 | `kernel_rtl.cpp` | 크리티컬 섹션, 문자열, 시간 변환, 상태 코드(공용 `NtStatusToDosError`) |
 | `kernel_hal.cpp` | IRQL, 시간, 인터럽트·DPC(전달 안 함), PCI, AV, 비휘발 설정, `DbgPrint` |
 | `kernel_crypto.cpp` | `XcSHA*` (SHA-1) |
-| `kernel_file.cpp`, `kernel_vfs.*` | 파일·디렉터리·장치·볼륨·IOCTL, Xbox 이름공간 → 호스트 디렉터리 |
+| `kernel_file.cpp`, `kernel_vfs.*` | 파일·디렉터리·장치·볼륨·IOCTL(디스크 geometry·파티션, DVD 드라이브의 `IOCTL_SCSI_PASS_THROUGH`: MODE SENSE 페이지 0x3E의 보안 페이지 답, [설계 i006](docs/design/20261020-i006-scsi-pass-through.md)), Xbox 이름공간 → 호스트 디렉터리 |
 | `kernel_data.cpp` | 데이터 export, `KeTickCount` 갱신 스레드, 커널 시간 |
 
 ### D3D8 HLE 파일

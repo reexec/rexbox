@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <system_error>
 
 namespace rexbox::hle::kernel
@@ -809,6 +810,68 @@ void NtQuerySymbolicLinkObject()
 constexpr uint64_t kDiskBytes = 8ull * 1024 * 1024 * 1024;
 constexpr uint32_t kIoctlDiskGetDriveGeometry = 0x00070000;
 constexpr uint32_t kIoctlDiskGetPartitionInfo = 0x00074004;
+// IOCTL_SCSI_PASS_THROUGH: CTL_CODE(IOCTL_SCSI_BASE, 0x0405, METHOD_BUFFERED,
+// FILE_READ_ACCESS | FILE_WRITE_ACCESS). A title sends raw SCSI commands to
+// the DVD drive with it (docs/kb/xbox-dvd-drive.md).
+constexpr uint32_t kIoctlScsiPassThrough = 0x0004D014;
+
+// SCSI_PASS_THROUGH (44 bytes): Length u16 at 0, ScsiStatus u8 at 2, PathId,
+// TargetId, Lun, CdbLength u8 at 6, SenseInfoLength at 7, DataIn u8 at 8,
+// DataTransferLength u32 at 12, TimeOutValue at 16, DataBufferOffset (a
+// guest pointer on the Xbox) at 20, SenseInfoOffset at 24, Cdb[16] at 28.
+constexpr uint32_t kScsiPassThroughSize = 0x2C;
+constexpr uint8_t kScsiModeSense10 = 0x5A;
+constexpr uint8_t kModePageXboxSecurity = 0x3E;
+
+// Answers a SCSI command of the DVD drive given through IOCTL_SCSI_PASS_THROUGH.
+// Only MODE SENSE(10) of page 0x3E, the Xbox DVD security page, has an answer:
+// a title checks it at boot to see that the disc is an authenticated Xbox
+// partition before it reads anything, and goes back to the dashboard
+// otherwise (Crazy Taxi 3, reexec/reCT3#3). Every other command is traced
+// once and completes with zeroed data. Returns the bytes transferred.
+uint32_t ScsiPassThrough(KernelObject& device, GuestAddress request, uint32_t request_length)
+{
+    runtime::GuestMemory& memory = Memory();
+    if (request_length < kScsiPassThroughSize || memory.Read16(request) < kScsiPassThroughSize)
+    {
+        TraceOnce("IOCTL_SCSI_PASS_THROUGH", device.xbox_path + " short request " + Hex(request_length));
+        return 0;
+    }
+    const uint8_t cdb_length = std::min<uint8_t>(memory.Read8(request + 6), 16);
+    const uint8_t data_in = memory.Read8(request + 8);
+    const uint32_t data_length = memory.Read32(request + 12);
+    const GuestAddress data = memory.Read32(request + 20);
+    std::string cdb;
+    for (uint8_t i = 0; i < cdb_length; ++i)
+    {
+        cdb += (i != 0 ? " " : "") + Hex(memory.Read8(request + 28 + i));
+    }
+    TraceOnce("IOCTL_SCSI_PASS_THROUGH", device.xbox_path + " cdb " + cdb + (data_in ? " in " : " out ") + Hex(data_length));
+    memory.Write8(request + 2, 0);  // ScsiStatus: GOOD
+    if (data != 0 && data_length != 0 && data_in != 0)
+    {
+        memory.Fill(data, 0, data_length);
+    }
+    const uint8_t opcode = cdb_length > 2 ? memory.Read8(request + 28) : 0;
+    const uint8_t page = cdb_length > 2 ? static_cast<uint8_t>(memory.Read8(request + 30) & 0x3F) : 0;
+    if (opcode == kScsiModeSense10 && page == kModePageXboxSecurity && data_in != 0 && data_length >= 28)
+    {
+        // MODE SENSE(10) parameter header (8 bytes, big-endian mode data
+        // length excluding its own two bytes) and the 20-byte page 0x3E:
+        // page code, length 18, partition select 1 (the Xbox partition),
+        // byte 3 = 1 (the kernel's XGD check), authenticated 1, book type D
+        // version 1 (an Xbox game disc), then the challenge fields at zero
+        // (docs/kb/xbox-dvd-drive.md).
+        static const uint8_t kAnswer[28] = {
+            0x00, 0x1A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            kModePageXboxSecurity, 0x12, 0x01, 0x01, 0x01, 0xD1, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        };
+        std::memcpy(memory.Translate(data), kAnswer, sizeof(kAnswer));
+        return sizeof(kAnswer);
+    }
+    return 0;
+}
 
 // Shared by NtDeviceIoControlFile and NtFsControlFile (same 10 arguments).
 void ControlFile(const char* function)
@@ -832,7 +895,12 @@ void ControlFile(const char* function)
         memory.Fill(output, 0, output_length);
     }
     uint32_t information = output_length;
-    if (code == kIoctlDiskGetDriveGeometry && output_length >= 24)
+    if (code == kIoctlScsiPassThrough)
+    {
+        ScsiPassThrough(*file, call.Arg(6), call.Arg(7));
+        information = call.Arg(7);  // the request structure, updated in place
+    }
+    else if (code == kIoctlDiskGetDriveGeometry && output_length >= 24)
     {
         // DISK_GEOMETRY: Cylinders, MediaType, TracksPerCylinder, SectorsPerTrack, BytesPerSector.
         Write64(output + 0, kDiskBytes / (255ull * 63 * 512));
