@@ -1,7 +1,7 @@
 # rexbox
 
 ![Language](https://img.shields.io/badge/C%2B%2B-20-00599C)
-![Hosts](https://img.shields.io/badge/hosts-Win32%20x86-0078D4)
+![Hosts](https://img.shields.io/badge/hosts-Win32%20x86%20%7C%20Linux%20x64%20%7C%20Linux%20x86-0078D4)
 ![Status](https://img.shields.io/badge/status-experimental-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
@@ -32,7 +32,7 @@ flowchart TD
 ```
 
 * `include/rexbox/`, `src/`: XBE 파서, 런타임, 재컴파일 ABI 어댑터, HLE 모듈. 타이틀 이름이나 주소는 없습니다.
-* `src/platform/`: OS 계층(Win32)과 SDL3 백엔드.
+* `src/platform/`: OS 계층(Win32, Linux)과 SDL3 백엔드.
 * `tools/`: `rexbox_xbe_info`, `rexbox_xdk_symbols`(재컴파일 파이프라인용), 게임 없이 도는 probe 세 개.
 * `scripts/recomp/`: 타이틀 프로젝트가 wrapper로 부르는 재컴파일 파이프라인 스크립트.
 * `third_party/`: SDL3, Dear ImGui, SMAA, XbSymbolDatabase, xboxrecomp(upstream v0.15.0) submodule.
@@ -65,7 +65,7 @@ cd rexbox
 .\build\win32_x86\tools\Debug\rexbox_d3d8_probe.exe
 ```
 
-자세한 절차: [Win32 개발 환경 준비와 빌드](docs/guides/win32-setup-and-build.md)
+자세한 절차: [Win32 개발 환경 준비와 빌드](docs/guides/win32-setup-and-build.md), [Linux 개발 환경 준비와 빌드](docs/guides/linux-setup-and-build.md)(`scripts/build_linux.sh x64 debug`)
 
 ## 플랫폼 상태
 
@@ -73,7 +73,7 @@ cd rexbox
 |---|---|
 | Win32 x86 | 빌드됨. reJSRF가 로고 시퀀스와 3D 어트랙트 데모를 그리고 음악을 내는 데 쓴다 |
 | Win64 | 예정 |
-| Linux x86 / x64 | 예정 |
+| Linux x64 / x86 | 라이브러리 빌드와 probe 통과(GCC 13, Ubuntu 24.04). 샘플러 없음. 타이틀 앱은 아직 없음 |
 | Web (wasm32) | 예정 |
 | Android | 예정 |
 
@@ -111,7 +111,7 @@ See the commands above, and [Win32 development setup and build](docs/guides/win3
 
 ## Platform status
 
-Win32 x86 builds and is what reJSRF runs on; Win64, Linux x86/x64, the web (wasm32) and Android are planned.
+Win32 x86 builds and is what reJSRF runs on; Linux x64 and x86 build the library and pass the probes (GCC 13, Ubuntu 24.04; no sampler, no title app yet); Win64, the web (wasm32) and Android are planned.
 
 ## Contributing and working rules
 

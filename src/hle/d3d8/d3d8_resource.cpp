@@ -19,17 +19,6 @@ constexpr uint32_t kFmtDxt5 = 0x0F;
 
 std::unordered_map<GuestAddress, HostResource> g_resources;
 
-uint32_t Log2Floor(uint32_t value)
-{
-    uint32_t result = 0;
-    while (value > 1)
-    {
-        value >>= 1;
-        ++result;
-    }
-    return result;
-}
-
 bool IsCompressed(uint32_t format)
 {
     return format == kFmtDxt1 || format == kFmtDxt3 || format == kFmtDxt5;

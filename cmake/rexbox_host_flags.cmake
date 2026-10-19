@@ -19,6 +19,15 @@ function(rexbox_apply_host_flags)
         # The whole program needs it, since the unwind crosses every layer.
         string(REPLACE "/EHsc" "/EHa" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
         set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}" PARENT_SCOPE)
+    elseif(CMAKE_SIZEOF_VOID_P EQUAL 4 AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(i[3-6]86|x86|x86_64|amd64|AMD64)$")
+        # (A -m32 build on an x86-64 host still reports the host processor.)
+        # 32-bit x86 with GCC or Clang: floating point on SSE, not the x87.
+        # The x87 keeps intermediates at 80 bits, so a float expression
+        # rounds differently from a stored float (two probe checks failed
+        # that way), and lifted guest arithmetic must round as the Xbox's
+        # Pentium III SSE and MSVC's x86 default (/arch:SSE2) do
+        # (docs/design/20261020-i004-linux-preparation.md).
+        add_compile_options(-msse2 -mfpmath=sse)
     endif()
 endfunction()
 

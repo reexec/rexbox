@@ -3,6 +3,7 @@
 사용자가 직접 반복 수행하는 설치, 빌드, 검증 절차를 둔다. 각 가이드는 근거가 되는 설계와 작업 로그를 링크한다. 게임을 실행하는 절차는 타이틀 프로젝트의 가이드에 있다.
 
 * [Win32 개발 환경 준비와 단독 빌드](win32-setup-and-build.md)
+* [Linux 개발 환경 준비와 단독 빌드](linux-setup-and-build.md)
 
 ---
 
@@ -11,3 +12,4 @@
 Repeatable setup, build and verification procedures the user runs. Each guide links the design and work log it rests on. Running a game is a title project's guide.
 
 * [Win32 development setup and standalone build](win32-setup-and-build.md)
+* [Linux development setup and standalone build](linux-setup-and-build.md)

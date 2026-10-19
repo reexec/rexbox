@@ -18,6 +18,21 @@ set(REXBOX_PLATFORM_SOURCES_win32
     ${REXBOX_IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
 )
 
+set(REXBOX_PLATFORM_SOURCES_linux
+    linux/guarded_call_linux.cpp
+    linux/host_thread_linux.cpp
+    linux/sampler_linux.cpp
+    linux/system_info_linux.cpp
+    linux/virtual_memory_linux.cpp
+    sdl/audio_sdl.cpp
+    sdl/display_sdl.cpp
+    sdl/input_sdl.cpp
+    sdl/overlay_sdl.cpp
+    sdl/paths_sdl.cpp
+    ${REXBOX_IMGUI_DIR}/backends/imgui_impl_sdl3.cpp
+    ${REXBOX_IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
+)
+
 add_library(rexbox_platform STATIC ${REXBOX_PLATFORM_SOURCES_${REXBOX_PLATFORM}})
 target_include_directories(rexbox_platform PUBLIC "${rexbox_SOURCE_DIR}/include")
 # SDL is an implementation detail of the platform layer: its headers and
@@ -26,4 +41,9 @@ target_link_libraries(rexbox_platform PRIVATE SDL3::SDL3-static imgui)
 if(WIN32)
     # timeBeginPeriod for the sampler's millisecond interval.
     target_link_libraries(rexbox_platform PRIVATE winmm)
+endif()
+if(REXBOX_PLATFORM STREQUAL "linux")
+    # pthreads for the host threads; the rest is the C library and /proc.
+    find_package(Threads REQUIRED)
+    target_link_libraries(rexbox_platform PUBLIC Threads::Threads)
 endif()

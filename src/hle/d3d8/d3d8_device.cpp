@@ -316,6 +316,27 @@ void D3DDevice_GetBackBuffer()
     call.Return(kD3dOk, 3);
 }
 
+// HRESULT D3DDevice_GetRenderTarget(D3DSurface** ppRenderTarget)
+// The current render target (a back buffer until SetRenderTarget changes it)
+// with a reference added, as the original hands out its m_pRenderTarget.
+void D3DDevice_GetRenderTarget()
+{
+    HleCall call;
+    const GuestAddress out = call.Arg(0);
+    D3dState& state = State();
+    if (out != 0)
+    {
+        Memory().Write32(out, state.render_target);
+    }
+    if (state.render_target == 0)
+    {
+        call.Return(kD3dErrNotFound, 1);
+        return;
+    }
+    AddResourceRef(state.render_target);
+    call.Return(kD3dOk, 1);
+}
+
 // HRESULT D3DDevice_GetDepthStencilSurface(D3DSurface** ppZStencilSurface)
 void D3DDevice_GetDepthStencilSurface()
 {
@@ -778,6 +799,7 @@ void RegisterDeviceExports(runtime::HleRegistry& registry)
 {
     registry.AddExport("d3d8", "Direct3D_CreateDevice", &Direct3D_CreateDevice);
     registry.AddExport("d3d8", "D3DDevice_GetBackBuffer", &D3DDevice_GetBackBuffer);
+    registry.AddExport("d3d8", "D3DDevice_GetRenderTarget", &D3DDevice_GetRenderTarget);
     registry.AddExport("d3d8", "D3DDevice_GetDepthStencilSurface", &D3DDevice_GetDepthStencilSurface);
     registry.AddExport("d3d8", "D3DDevice_SetRenderTarget", &D3DDevice_SetRenderTarget);
     registry.AddExport("d3d8", "D3DDevice_Reset", &D3DDevice_Reset);
