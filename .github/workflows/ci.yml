@@ -1,12 +1,15 @@
 name: CI
 
-# The fast gate: a broken build is found on the branch rather than after the
-# merge. rexbox holds no game data, so this is the whole library, the tools
-# and the three probes that need none.
+# The fast gate (docs/design/20261020-i002-github-actions.md): every push to
+# main and every pull request configures the library, builds it with its
+# tools, and runs the unit tests (the probes, through CTest). rexbox holds no
+# game data, so this is the whole library.
 on:
   push:
     branches: [main]
   pull_request:
+  # Run by hand on a task branch (gh workflow run ci.yml --ref <branch>) to
+  # check a CI change before any pull request exists.
   workflow_dispatch:
 
 permissions:
@@ -18,7 +21,7 @@ concurrency:
 
 jobs:
   win32:
-    name: Win32 x86 build
+    name: Win32 x86 build and tests
     # Pinned rather than windows-latest: build_win32_x86.ps1 picks its
     # generator from the installed Visual Studio, so a floating image would
     # silently change the toolchain.
@@ -40,14 +43,6 @@ jobs:
         shell: powershell
         run: .\scripts\build_win32_x86.ps1 -Configuration ${{ matrix.configuration }}
 
-      - name: Probe - kernel HLE
+      - name: Unit tests (CTest)
         shell: powershell
-        run: .\build\win32_x86\tools\${{ matrix.configuration }}\rexbox_kernel_probe.exe
-
-      - name: Probe - DSOUND HLE
-        shell: powershell
-        run: .\build\win32_x86\tools\${{ matrix.configuration }}\rexbox_dsound_probe.exe
-
-      - name: Probe - D3D8 HLE
-        shell: powershell
-        run: .\build\win32_x86\tools\${{ matrix.configuration }}\rexbox_d3d8_probe.exe
+        run: ctest --test-dir build\win32_x86 -C ${{ matrix.configuration }} --output-on-failure

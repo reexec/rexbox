@@ -33,3 +33,8 @@ target_link_libraries(rexbox_d3d8_probe PRIVATE rexbox_hle_d3d8)
 target_include_directories(rexbox_d3d8_probe PRIVATE ${rexbox_SOURCE_DIR}/src/hle/d3d8)
 rexbox_check_license(rexbox_d3d8_probe)
 rexbox_strict_warnings(rexbox_d3d8_probe)
+
+# The probes are the unit tests: each exits 0 only with 0 failures.
+add_test(NAME rexbox_kernel_probe COMMAND rexbox_kernel_probe)
+add_test(NAME rexbox_dsound_probe COMMAND rexbox_dsound_probe)
+add_test(NAME rexbox_d3d8_probe COMMAND rexbox_d3d8_probe)

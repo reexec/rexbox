@@ -142,6 +142,11 @@ if(REXBOX_BUILD_TOOLS)
     add_subdirectory(third_party/XbSymbolDatabase EXCLUDE_FROM_ALL)
 endif()
 
+# The unit tests are the probes (tools/), registered with CTest when the
+# tools are built; `ctest -C <config>` runs them from the build tree. A
+# consumer that enables testing at its own top level gets them too.
+enable_testing()
+
 # Layers, lowest first. Each layer links only the layers below it.
 add_subdirectory(src/platform)       # rexbox_platform: OS contracts
 add_subdirectory(src)                # rexbox_*: XBE, runtime, recomp adapter, HLE modules
