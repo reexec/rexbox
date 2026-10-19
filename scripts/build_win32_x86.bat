@@ -3,7 +3,7 @@ rem Runs build_win32_x86.ps1 without changing the PowerShell execution policy
 rem (the policy blocks .ps1 files by default). Arguments pass through:
 rem   scripts\build_win32_x86.bat                      Debug
 rem   scripts\build_win32_x86.bat Release              Release
-rem   scripts\build_win32_x86.bat -Configuration Release -Target rejsrf
+rem   scripts\build_win32_x86.bat -Configuration Release -Target rexbox_kernel_probe
 setlocal
 set "ARGS=%*"
 if "%~1"=="" set "ARGS=-Configuration Debug"

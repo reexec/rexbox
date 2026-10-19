@@ -3,12 +3,13 @@
 The app writes "<module> <offset hex> <samples> [<caller offset hex>]" lines
 (platform/sampler.h); the caller is the executable's code found on the stack
 of a sample outside the executable.
-Offsets in rejsrf.exe are resolved with the linker map (rejsrf.map, written
-next to the executable by MSVC builds). Offsets in system DLLs are resolved
+Offsets in the title's executable are resolved with its linker map (<app>.map,
+written next to the executable by MSVC builds; the executable is the map's
+base name). Offsets in system DLLs are resolved
 to the nearest export below them, read from the DLL in --dll-dir (default
 the 32-bit system folder); other modules are grouped by name.
 
-Usage: python scripts/perf/resolve_samples.py <samples.txt> <rejsrf.map> [--top N]
+Usage: python scripts/perf/resolve_samples.py <samples.txt> <app.map> [--top N]
 """
 
 import argparse
@@ -38,7 +39,7 @@ def short_name(name):
 def group_of(where):
     """The library a map entry comes from (lib:object -> lib)."""
     library = where.split(":")[0]
-    if library.startswith("rejsrf_recomp"):
+    if library.endswith("_recomp") or "_recomp." in library:
         return "lifted title code"
     return library
 
@@ -109,6 +110,8 @@ def main():
     exports = {}
 
     entries = load_map(args.map)
+    # The executable the map describes: <name>.map next to <name>.exe.
+    exe_name = os.path.splitext(os.path.basename(args.map))[0].lower() + ".exe"
     starts = [e[0] for e in entries]
 
     def exe_function(offset):
@@ -130,7 +133,7 @@ def main():
             module, offset, count = fields[0], int(fields[1], 16), int(fields[2])
             caller = exe_function(int(fields[3], 16)) if len(fields) > 3 else None
             total += count
-            if module.lower().endswith("rejsrf.exe"):
+            if module.lower().endswith(exe_name):
                 found = exe_function(offset)
                 if found:
                     by_function[found] += count

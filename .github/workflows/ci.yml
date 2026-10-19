@@ -1,0 +1,53 @@
+name: CI
+
+# The fast gate: a broken build is found on the branch rather than after the
+# merge. rexbox holds no game data, so this is the whole library, the tools
+# and the three probes that need none.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  win32:
+    name: Win32 x86 build
+    # Pinned rather than windows-latest: build_win32_x86.ps1 picks its
+    # generator from the installed Visual Studio, so a floating image would
+    # silently change the toolchain.
+    runs-on: windows-2022
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          # rexbox_recomp compiles against xboxrecomp's pinned ABI header;
+          # SDL, imgui, smaa and XbSymbolDatabase are built from source.
+          submodules: true
+
+      - name: Build
+        shell: powershell
+        run: .\scripts\build_win32_x86.ps1 -Configuration ${{ matrix.configuration }}
+
+      - name: Probe - kernel HLE
+        shell: powershell
+        run: .\build\win32_x86\tools\${{ matrix.configuration }}\rexbox_kernel_probe.exe
+
+      - name: Probe - DSOUND HLE
+        shell: powershell
+        run: .\build\win32_x86\tools\${{ matrix.configuration }}\rexbox_dsound_probe.exe
+
+      - name: Probe - D3D8 HLE
+        shell: powershell
+        run: .\build\win32_x86\tools\${{ matrix.configuration }}\rexbox_d3d8_probe.exe

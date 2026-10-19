@@ -43,7 +43,7 @@ void SetComplexRenderState()
 
 // D3DRS_ZBIAS also sets the polygon-offset states (the original goes through
 // SetRenderStateNotInline): slope -Value/4, offset -Value, the three enables
-// to Value != 0 (measured with rejsrf_d3d8_check).
+// to Value != 0 (measured with reJSRF's rejsrf_d3d8_check).
 void ApplyZBias(uint32_t value)
 {
     const float bias = static_cast<float>(value);

@@ -11,14 +11,14 @@ compiler gives its functions: 16-byte aligned, preceded by nop/int3 padding or
 a return, and not starting with padding itself. Addresses already lifted (in
 the generated dispatch table) are left out. XDK library sections are not
 scanned: their functions are not aligned, and the libraries are HLE or seeded
-by hand (seed_functions.json).
+by hand.
 
 Usage:
-    python scripts/recomp/find_pointer_targets.py            # list candidates
-    python scripts/recomp/find_pointer_targets.py --write    # also write the seed file
+    python find_pointer_targets.py --xbe <xbe> --variant <v> --variants <variants.json>
+                                   --dispatch <gen>/gen/recomp_dispatch.c --seed-file <json> [--write]
 
---write replaces src/game/jsrf/recomp/seed_pointer_targets.json, which
-regenerate.py reads like any other seed file. Rerun regenerate.py afterwards.
+--write replaces the seed file, which regenerate.py reads like any other seed
+file. Rerun regenerate.py afterwards. A title's wrapper fills in the paths.
 """
 
 import argparse
@@ -28,12 +28,8 @@ import re
 import struct
 import sys
 
-from xbe_variant import check_xbe
-
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-DEFAULT_XBE = ROOT / "roms" / "Jet Set Radio Future" / "default.xbe"
-DISPATCH = ROOT / "gen" / "jsrf_us" / "gen" / "recomp_dispatch.c"
-SEED_FILE = ROOT / "src" / "game" / "jsrf" / "recomp" / "seed_pointer_targets.json"
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from xbe_variant import check_xbe  # noqa: E402
 
 PADDING = (0x90, 0xCC)
 
@@ -51,21 +47,34 @@ def sections(image):
     return result
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--xbe", default=str(DEFAULT_XBE))
+def build_parser(defaults):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--xbe", type=pathlib.Path, default=defaults.get("xbe"))
+    parser.add_argument("--variant", default=defaults.get("variant"))
+    parser.add_argument("--variants", type=pathlib.Path, default=defaults.get("variants"))
+    parser.add_argument("--dispatch", type=pathlib.Path, default=defaults.get("dispatch"),
+                        help="the generated recomp_dispatch.c")
+    parser.add_argument("--seed-file", type=pathlib.Path, default=defaults.get("seed_file"))
     parser.add_argument("--write", action="store_true")
-    args = parser.parse_args()
+    return parser
 
-    problem = check_xbe(args.xbe)
+
+def run(argv=None, **defaults):
+    parser = build_parser(defaults)
+    args = parser.parse_args(argv)
+    for required in ("xbe", "variant", "variants", "dispatch", "seed_file"):
+        if getattr(args, required) is None:
+            parser.error(f"--{required.replace('_', '-')} is required")
+
+    problem = check_xbe(args.xbe, args.variant, args.variants)
     if problem:
         print(f"error: {problem}", file=sys.stderr)
         return 2
     image = pathlib.Path(args.xbe).read_bytes()
-    if not DISPATCH.exists():
-        print(f"error: {DISPATCH} is missing; run regenerate.py first", file=sys.stderr)
+    if not args.dispatch.exists():
+        print(f"error: {args.dispatch} is missing; run regenerate.py first", file=sys.stderr)
         return 2
-    lifted = {int(value, 16) for value in re.findall(r"\{ 0x([0-9A-Fa-f]{8})u,", DISPATCH.read_text())}
+    lifted = {int(value, 16) for value in re.findall(r"\{ 0x([0-9A-Fa-f]{8})u,", args.dispatch.read_text())}
 
     layout = sections(image)
     text = next(s for s in layout if s[0] == ".text")
@@ -109,16 +118,16 @@ def main():
             for address in sorted(references)
         ]
         previous = []
-        if SEED_FILE.exists():
-            previous = json.loads(SEED_FILE.read_text(encoding="utf-8"))
+        if args.seed_file.exists():
+            previous = json.loads(args.seed_file.read_text(encoding="utf-8"))
         known = {entry["start"] for entry in previous}
         merged = previous + [entry for entry in seeds if entry["start"] not in known]
         merged.sort(key=lambda entry: int(entry["start"], 16))
         lines = [json.dumps(entry) for entry in merged]
-        SEED_FILE.write_text("[\n  " + ",\n  ".join(lines) + "\n]\n", encoding="utf-8", newline="\n")
-        print(f"wrote {SEED_FILE.relative_to(ROOT)} ({len(merged)} seed(s))")
+        args.seed_file.write_text("[\n  " + ",\n  ".join(lines) + "\n]\n", encoding="utf-8", newline="\n")
+        print(f"wrote {args.seed_file} ({len(merged)} seed(s))")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run())

@@ -47,7 +47,7 @@ void SetStopOnUnresolvedCall(bool stop);
 void SetUnimplementedHleFallback(bool run_lifted);
 
 // Writes the direct-call profile of every guest thread (recent targets and
-// counts) when the generated code was built with REJSRF_RECOMP_CALL_PROFILE;
+// counts) when the generated code was built with REXBOX_RECOMP_CALL_PROFILE;
 // otherwise says so. Diagnostic for a thread that stopped calling the HLE.
 void DumpCallProfile(FILE* out);
 

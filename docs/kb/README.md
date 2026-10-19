@@ -1,6 +1,6 @@
-# reJSRF 기술 지식 기반 색인
+# rexbox 기술 지식 기반 색인
 
-이 디렉터리는 프로젝트를 이해하는 데 필요한 일반 기술 지식을 정리한다. JSRF 바이너리에서 직접 확인한 사실은 `docs/analysis/`에 기록한다. 외부 자료에서 얻은 정의와 규약에는 원문 링크를 함께 둔다.
+이 디렉터리는 rexbox를 이해하는 데 필요한 일반 Xbox 기술 지식을 정리한다. 문서들은 reJSRF에서 작성되어 함께 옮겨졌으므로, "게임 코드로 확인"이라는 표기는 그 타이틀(JSRF US 빌드)의 바이너리에서 확인했다는 뜻이다. 타이틀 바이너리에서 확인한 사실은 각 타이틀 프로젝트의 `docs/analysis/`에 기록한다. 외부 자료에서 얻은 정의와 규약에는 원문 링크를 함께 둔다.
 
 ```mermaid
 flowchart TD
@@ -27,9 +27,9 @@ flowchart TD
 
 ---
 
-# reJSRF Knowledge Base Index
+# rexbox Knowledge Base Index
 
-This directory holds general technical knowledge needed to understand the project. Facts confirmed from the JSRF binary go to `docs/analysis/`. Definitions and conventions from outside sources carry links to the originals.
+This directory holds the general Xbox knowledge needed to understand rexbox. The documents were written in reJSRF and moved here with it, so "confirmed in game code" means confirmed on that title's binary (the JSRF US build). Facts confirmed on a title's binary go to that title project's `docs/analysis/`. Definitions and conventions from outside sources carry links to the originals.
 
 ## Documents
 

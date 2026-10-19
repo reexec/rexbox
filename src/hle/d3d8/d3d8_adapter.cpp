@@ -2,7 +2,7 @@
 //
 // The tables here reproduce what the XDK 4134 D3D8 library answers for the
 // AV configuration the kernel HLE reports (NTSC-M, composite, no HD modes).
-// They were measured with rejsrf_d3d8_check --dump and are re-checked by its
+// They were measured with reJSRF's rejsrf_d3d8_check --dump and are re-checked by its
 // comparison mode (docs/analysis/d3d8-adapter.md).
 
 #include "d3d8_internal.h"

@@ -1,8 +1,8 @@
 # 코딩 스타일
 
-이 규칙은 [rePIU의 CODING_STYLE](https://github.com/reexec/rePIU/blob/main/docs/CODING_STYLE.md)을 따르고, 재컴파일·디컴파일 코드에 필요한 항목을 더했다.
+이 규칙은 [reJSRF의 CODING_STYLE](https://github.com/nworkers/reJSRF/blob/main/docs/CODING_STYLE.md)과 같다(원래 [rePIU의 CODING_STYLE](https://github.com/reexec/rePIU/blob/main/docs/CODING_STYLE.md)에서 왔다). 재컴파일·디컴파일 코드 항목은 타이틀 프로젝트의 디컴파일 코드에 적용되며, rexbox 자체에는 그런 코드가 없다.
 
-These rules follow [rePIU's CODING_STYLE](https://github.com/reexec/rePIU/blob/main/docs/CODING_STYLE.md), with additions for recompiled and decompiled code.
+These rules are those of [reJSRF's CODING_STYLE](https://github.com/nworkers/reJSRF/blob/main/docs/CODING_STYLE.md) (originally from [rePIU's CODING_STYLE](https://github.com/reexec/rePIU/blob/main/docs/CODING_STYLE.md)). The recompiled and decompiled code section applies to a title project's decompiled code; rexbox itself holds none.
 
 ## 기본 원칙
 
@@ -33,7 +33,7 @@ These rules follow [rePIU's CODING_STYLE](https://github.com/reexec/rePIU/blob/m
 * 들여쓰기는 공백 4칸을 사용한다.
 * 함수명은 `PascalCase`, 변수명은 `snake_case`, 클래스 멤버 변수는 `snake_case_`, 상수는 `kPascalCase`를 사용한다.
 * C++ 소스 파일 확장자는 `.cpp`, 헤더는 `.h`를 사용한다. C 소스는 `.c`를 사용한다.
-* 네임스페이스: 재사용 런타임은 `rexbox::<layer>`(예: `rexbox::hle::d3d8`), 타이틀 코드는 `rejsrf`.
+* 네임스페이스: `rexbox::<layer>`(예: `rexbox::hle::d3d8`). 타이틀 코드의 네임스페이스는 타이틀 프로젝트가 정한다(reJSRF는 `rejsrf`, reCT3는 `rect3`).
 * include 경로는 `include/` 기준(`"rexbox/runtime/guest_memory.h"`)으로 쓴다.
 * include guard는 경로를 대문자로 바꾼 `REXBOX_RUNTIME_GUEST_MEMORY_H` 형식을 쓴다.
 
@@ -44,7 +44,7 @@ These rules follow [rePIU's CODING_STYLE](https://github.com/reexec/rePIU/blob/m
 * Use four spaces for indentation.
 * Use `PascalCase` for functions, `snake_case` for variables, `snake_case_` for class members, and `kPascalCase` for constants.
 * Use `.cpp` for C++ sources and `.h` for headers. C sources use `.c`.
-* Namespaces: the reusable runtime uses `rexbox::<layer>` (for example `rexbox::hle::d3d8`); title code uses `rejsrf`.
+* Namespaces: `rexbox::<layer>` (for example `rexbox::hle::d3d8`). A title project chooses its own (`rejsrf` in reJSRF, `rect3` in reCT3).
 * Write include paths relative to `include/` (`"rexbox/runtime/guest_memory.h"`).
 * Include guards spell the path in upper case, as in `REXBOX_RUNTIME_GUEST_MEMORY_H`.
 
@@ -107,15 +107,15 @@ The incorrect and correct forms are the two blocks above: braces move to their o
 ## 디렉터리 정책
 
 * 플랫폼 공용 계약은 `include/rexbox/platform/`, 구현은 `src/platform/<플랫폼>/`에 둔다. 아키텍처에 따라 갈리는 구현은 `src/platform/<플랫폼>/<아키텍처>/`에 두고, 그 파일은 첫머리에서 `#error`로 자기 아키텍처를 확인한다. 여러 플랫폼이 공유하는 호스트 라이브러리 백엔드는 `src/platform/<라이브러리>/`(예: `src/platform/sdl/`)에 두며, 그 라이브러리의 헤더는 그 디렉터리 밖에서 include하지 않는다.
-* 재사용 런타임은 `include/rexbox/`, `src/rexbox/`에 둔다. 이 아래에는 플랫폼·아키텍처 하위 디렉터리를 두지 않는다.
-* 타이틀 코드는 `include/rejsrf/`, `src/game/jsrf/`에 둔다.
+* 런타임은 `include/rexbox/`와 `src/`(`xbe/`, `runtime/`, `recomp/`, `hle/<module>/`)에 둔다. 이 아래에는 플랫폼·아키텍처 하위 디렉터리를 두지 않는다.
+* 타이틀 코드는 타이틀 프로젝트의 `include/<title>/`, `src/game/<title>/`에 두며 이 저장소에는 두지 않는다.
 * 헤더에서 플랫폼을 고르는 `#if`는 플랫폼 헤더의 선택 지점에만 두며, 그 안에는 `#include`만 둔다.
 
 ## Directory Policy
 
 * Platform-neutral contracts go in `include/rexbox/platform/`, implementations in `src/platform/<platform>/`. Implementations that differ by architecture go in `src/platform/<platform>/<arch>/`, and such files check their own architecture with `#error` at the top. A backend on a host library shared by several platforms goes in `src/platform/<library>/` (for example `src/platform/sdl/`), and that library's headers are never included outside that directory.
-* The reusable runtime goes in `include/rexbox/` and `src/rexbox/`, with no platform or architecture subdirectories.
-* Title code goes in `include/rejsrf/` and `src/game/jsrf/`.
+* The runtime goes in `include/rexbox/` and `src/` (`xbe/`, `runtime/`, `recomp/`, `hle/<module>/`), with no platform or architecture subdirectories.
+* Title code goes in the title project's `include/<title>/` and `src/game/<title>/`, never here.
 * A `#if` that chooses a platform in a header exists only at the selection points of platform headers, with nothing but `#include` inside.
 
 ## 라이선스 정책

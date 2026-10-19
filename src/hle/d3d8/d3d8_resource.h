@@ -4,7 +4,7 @@
 // The game reads header fields and builds headers itself (XGRAPHC runs as
 // lifted code, D3DResource_Register hands them to D3D), so the layout and the
 // bit fields below are the original's (docs/kb/xbox-d3d8-api.md section 6,
-// confirmed against the lifted library in rejsrf_d3d8_check).
+// confirmed against the lifted library in reJSRF's rejsrf_d3d8_check).
 
 #ifndef REXBOX_HLE_D3D8_D3D8_RESOURCE_H
 #define REXBOX_HLE_D3D8_D3D8_RESOURCE_H
