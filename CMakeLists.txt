@@ -140,6 +140,13 @@ if(REXBOX_BUILD_TOOLS)
         message(FATAL_ERROR "third_party/XbSymbolDatabase is missing; run: git submodule update --init")
     endif()
     add_subdirectory(third_party/XbSymbolDatabase EXCLUDE_FROM_ALL)
+    if(NOT MSVC)
+        # The library builds with -Werror, and GCC's fortified memcpy at -O2
+        # reports an 8-byte read of a shorter string literal in
+        # XbSDB_GenerateLibraryFilter (seen on a -m32 Release build). Upstream's
+        # code is left as it is; the diagnostic stays a warning here.
+        target_compile_options(libXbSymbolDatabase PRIVATE -Wno-error=stringop-overread)
+    endif()
 endif()
 
 # The unit tests are the probes (tools/), registered with CTest when the
