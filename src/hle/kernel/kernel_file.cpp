@@ -837,7 +837,9 @@ uint32_t ScsiPassThrough(KernelObject& device, GuestAddress request, uint32_t re
         TraceOnce("IOCTL_SCSI_PASS_THROUGH", device.xbox_path + " short request " + Hex(request_length));
         return 0;
     }
-    const uint8_t cdb_length = std::min<uint8_t>(memory.Read8(request + 6), 16);
+    // CdbLength is left at 0 by the titles seen (the Xbox kernel takes the
+    // command's length from its opcode), so the whole 16-byte CDB is read.
+    const uint8_t cdb_length = 16;
     const uint8_t data_in = memory.Read8(request + 8);
     const uint32_t data_length = memory.Read32(request + 12);
     const GuestAddress data = memory.Read32(request + 20);
@@ -852,8 +854,8 @@ uint32_t ScsiPassThrough(KernelObject& device, GuestAddress request, uint32_t re
     {
         memory.Fill(data, 0, data_length);
     }
-    const uint8_t opcode = cdb_length > 2 ? memory.Read8(request + 28) : 0;
-    const uint8_t page = cdb_length > 2 ? static_cast<uint8_t>(memory.Read8(request + 30) & 0x3F) : 0;
+    const uint8_t opcode = memory.Read8(request + 28);
+    const uint8_t page = static_cast<uint8_t>(memory.Read8(request + 30) & 0x3F);
     if (opcode == kScsiModeSense10 && page == kModePageXboxSecurity && data_in != 0 && data_length >= 28)
     {
         // MODE SENSE(10) parameter header (8 bytes, big-endian mode data
