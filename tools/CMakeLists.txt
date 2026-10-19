@@ -16,6 +16,12 @@ rexbox_strict_warnings(rexbox_xdk_symbols)
 # Kernel HLE checks that need no game data (run in CI).
 add_executable(rexbox_kernel_probe kernel_probe/main.cpp)
 target_link_libraries(rexbox_kernel_probe PRIVATE rexbox_hle_kernel)
+if(MSVC)
+    # The physical-window check maps the RAM at base + 0x80000000 and
+    # base + 0xF0000000 (modulo 2^32): a 32-bit process needs the 4 GiB
+    # address space, as a title's application does.
+    target_link_options(rexbox_kernel_probe PRIVATE /LARGEADDRESSAWARE)
+endif()
 rexbox_check_license(rexbox_kernel_probe)
 rexbox_strict_warnings(rexbox_kernel_probe)
 

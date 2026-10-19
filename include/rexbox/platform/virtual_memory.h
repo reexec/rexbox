@@ -7,6 +7,7 @@
 #define REXBOX_PLATFORM_VIRTUAL_MEMORY_H
 
 #include <cstddef>
+#include <cstdint>
 
 namespace rexbox::platform
 {
@@ -47,6 +48,20 @@ bool ProtectVirtualMemory(void* address, size_t size, PageAccess access);
 
 // The host page size in bytes.
 size_t PageSize();
+
+// A guest address space with aliases of its RAM: `ram` bytes of zeroed
+// read/write memory at [base, base + ram), `extra` bytes of plain memory
+// right after it, and the same RAM pages visible again at base + alias for
+// each of the `alias_count` offsets in `aliases`, where the sum wraps at the
+// host pointer width (on a 32-bit host an alias of 0x80000000 lands at
+// base ^ 0x80000000, so no 2 GiB span is needed). The RAM and its aliases
+// are one shared memory object; writes through any of them are seen through
+// all. Such memory has no write tracking (TakeWrittenPages fails on it).
+// Returns false, with *base untouched, when no fitting addresses are free.
+bool AllocateGuestSpace(size_t ram, size_t extra, const uintptr_t* aliases, size_t alias_count, void** base);
+
+// Releases a space returned by AllocateGuestSpace, given the same arguments.
+void FreeGuestSpace(void* base, size_t ram, size_t extra, const uintptr_t* aliases, size_t alias_count);
 
 }  // namespace rexbox::platform
 

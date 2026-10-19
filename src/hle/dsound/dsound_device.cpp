@@ -243,6 +243,9 @@ void RegisterDeviceExports(runtime::HleRegistry& registry)
     registry.AddExport("dsound", "IDirectSound_SetRolloffFactor", &AcceptSetting<3>);
     registry.AddExport("dsound", "IDirectSound_SetVelocity", &AcceptSetting<5>);
     registry.AddExport("dsound", "IDirectSound_SetI3DL2Listener", &AcceptSetting<3>);
+    // HRESULT IDirectSound_SetMixBinHeadroom(LPDIRECTSOUND pThis, DWORD dwMixBin, DWORD dwHeadroom):
+    // headroom only scales the mixer's output; accepted (XDK 4531 titles call it).
+    registry.AddExport("dsound", "IDirectSound_SetMixBinHeadroom", &AcceptSetting<3>);
 }
 
 }  // namespace rexbox::hle::dsound

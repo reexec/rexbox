@@ -22,7 +22,8 @@ The title's recomp directory (--title-dir) holds:
     variants.json            the XBE each variant is lifted from (md5)
     *.json lists             function entry points the disassembler misses
                              ({"start": "0x..."}); each is passed as a seed
-    hle_libraries.json       libraries/functions replaced by HLE exports
+    hle_libraries.json       libraries/functions replaced by HLE exports, and
+                             'lifted': functions of those libraries kept as lifted code
     xdk_symbols_extra.json   XDK functions XbSymbolDatabase misses
 
 HLE overrides: rexbox_xdk_symbols (XbSymbolDatabase) identifies the XDK
@@ -103,6 +104,10 @@ def write_hle_overrides(symbols, functions_json, out_dir, hle_libraries):
     config = json.loads(hle_libraries.read_text(encoding="utf-8")) if hle_libraries.is_file() else {}
     libraries = set(config.get("libraries", []))
     single = {(f["library"], f["name"]) for f in config.get("functions", [])}
+    # Functions of an HLE library the title keeps as lifted code: pure
+    # internals a lifted caller needs (a title names them instead of running
+    # with REXBOX_HLE_FALLBACK=lifted).
+    lifted = set(config.get("lifted", []))
     starts = {int(f["start"], 16) for f in json.loads(functions_json.read_text(encoding="utf-8"))}
     chosen = {}
     skipped = []
@@ -110,6 +115,8 @@ def write_hle_overrides(symbols, functions_json, out_dir, hle_libraries):
         if symbol["kind"] != "function":
             continue
         if symbol["library"] not in libraries and (symbol["library"], symbol["name"]) not in single:
+            continue
+        if symbol["name"] in lifted:
             continue
         address = int(symbol["address"], 16)
         if address not in starts:
@@ -155,7 +162,7 @@ def write_hle_overrides(symbols, functions_json, out_dir, hle_libraries):
     target = out_dir / "hle_overrides.c"
     target.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(f"    hle overrides: {len(chosen)} function(s) of {sorted(libraries)} and {len(single)} selected; "
-          f"{len(skipped)} skipped; {len(variables)} XDK variable(s)")
+          f"{len(skipped)} skipped; {len(lifted)} kept lifted; {len(variables)} XDK variable(s)")
     for item in skipped:
         print(f"      skipped {item}")
     return target

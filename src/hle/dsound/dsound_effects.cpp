@@ -44,18 +44,22 @@ GuestAddress EffectState(const EffectsImage& image, uint32_t index, uint32_t* st
 
 // HRESULT IDirectSound_DownloadEffectsImage(LPDIRECTSOUND pThis, LPCVOID pvImageBuffer,
 //     DWORD dwImageSize, LPCDSEFFECTIMAGELOC pImageLoc, LPDSEFFECTIMAGEDESC* ppImageDesc)
-void IDirectSound_DownloadEffectsImage()
+// and its global form HRESULT XAudioDownloadEffectsImage(LPCVOID pvImageBuffer, DWORD dwImageSize,
+//     LPCDSEFFECTIMAGELOC pImageLoc, LPDSEFFECTIMAGEDESC* ppImageDesc), the one XDK 4531
+// titles call: `first` is the index of pvImageBuffer among the arguments and
+// `pops` the argument count.
+void DownloadEffectsImage(uint32_t first, uint32_t pops)
 {
     HleCall call;
-    const GuestAddress image = call.Arg(1);
-    const uint32_t size = call.Arg(2);
-    const GuestAddress out = call.Arg(4);
+    const GuestAddress image = call.Arg(first);
+    const uint32_t size = call.Arg(first + 1);
+    const GuestAddress out = call.Arg(first + 3);
     DsoundState& state = State();
     std::lock_guard<std::mutex> lock(state.mutex);
     runtime::GuestMemory& memory = Memory();
     if (image == 0 || size < layout::kImageBody || !memory.IsValid(image, size))
     {
-        call.Return(kErrInvalidCall, 5);
+        call.Return(kErrInvalidCall, pops);
         return;
     }
     const uint64_t words = static_cast<uint64_t>(memory.Read32(image + layout::kImageCodeWords)) +
@@ -64,7 +68,7 @@ void IDirectSound_DownloadEffectsImage()
     if (table + layout::kImageDescMaps > size)
     {
         std::fprintf(stderr, "[dsound] DownloadEffectsImage: the effect table lies outside the %u-byte image\n", size);
-        call.Return(kErrInvalidCall, 5);
+        call.Return(kErrInvalidCall, pops);
         return;
     }
     const GuestAddress source = image + static_cast<uint32_t>(table);
@@ -74,7 +78,7 @@ void IDirectSound_DownloadEffectsImage()
     if (count > kMaxEffects || table + descriptor_size > size)
     {
         std::fprintf(stderr, "[dsound] DownloadEffectsImage: %u effects do not fit the image\n", count);
-        call.Return(kErrInvalidCall, 5);
+        call.Return(kErrInvalidCall, pops);
         return;
     }
 
@@ -136,6 +140,16 @@ void IDirectSound_DownloadEffectsImage()
     call.Return(kDsOk, 5);
 }
 
+void IDirectSound_DownloadEffectsImage()
+{
+    DownloadEffectsImage(1, 5);
+}
+
+void XAudioDownloadEffectsImage()
+{
+    DownloadEffectsImage(0, 4);
+}
+
 // HRESULT IDirectSound_GetEffectData(LPDIRECTSOUND pThis, DWORD dwEffectIndex,
 //     DWORD dwOffset, LPVOID pvData, DWORD dwDataSize)
 void IDirectSound_GetEffectData()
@@ -187,6 +201,7 @@ void IDirectSound_SetEffectData()
 void RegisterEffectsExports(runtime::HleRegistry& registry)
 {
     registry.AddExport("dsound", "IDirectSound_DownloadEffectsImage", &IDirectSound_DownloadEffectsImage);
+    registry.AddExport("dsound", "XAudioDownloadEffectsImage", &XAudioDownloadEffectsImage);
     registry.AddExport("dsound", "IDirectSound_GetEffectData", &IDirectSound_GetEffectData);
     registry.AddExport("dsound", "IDirectSound_SetEffectData", &IDirectSound_SetEffectData);
 }

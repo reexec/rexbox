@@ -430,6 +430,39 @@ void ProbeUserApc(const std::filesystem::path& game_directory)
     Call("NtClose", {file});
 }
 
+// The physical memory window (docs/design/20261020-i008-physical-window.md):
+// RAM written at its physical address reads back at 0x80000000 + P and
+// 0xF0000000 + P through Translate and through the generated code's own
+// arithmetic (base + guest address, wrapping at the pointer width).
+void ProbeGuestWindow()
+{
+    rexbox::runtime::GuestMemory window;
+    rexbox::runtime::GuestMemory::Options options;
+    options.physical_window = true;
+    if (!window.Initialize(rexbox::runtime::GuestMemory::kAddressSpaceSize, options))
+    {
+        Check(false, "guest memory with the physical window allocates");
+        return;
+    }
+    using GM = rexbox::runtime::GuestMemory;
+    const GuestAddress physical = 0x006E6000;
+    window.Write32(physical, 0x43543321);
+    Check(window.Read32(GM::kPhysicalWindow + physical) == 0x43543321, "the 0x80000000 window reads the RAM");
+    Check(window.Read32(GM::kWriteCombinedWindow + physical) == 0x43543321, "the 0xF0000000 window reads the RAM");
+    window.Write32(GM::kPhysicalWindow + physical, 0x11223344);
+    Check(window.Read32(physical) == 0x11223344, "a write through the window reaches the RAM");
+    // What XBOX_PTR computes: the guest address added to the base.
+    const auto generated = reinterpret_cast<volatile uint32_t*>(
+        reinterpret_cast<uintptr_t>(window.base()) + static_cast<uintptr_t>(GM::kPhysicalWindow + physical));
+    Check(*generated == 0x11223344, "generated-code arithmetic reaches the window");
+    *generated = 0x55667788;
+    Check(window.Read32(physical) == 0x55667788, "a generated-code write through the window reaches the RAM");
+    Check(window.IsValid(GM::kPhysicalWindow + physical, 4) && !window.IsValid(GM::kPhysicalWindow + GM::kRetailRamSize, 4) &&
+              !window.IsValid(0x90000000u, 4),
+          "IsValid accepts window addresses inside the RAM only");
+    Check(!window.TracksWrites(), "window memory reports no write tracking");
+}
+
 }  // namespace
 
 int main()
@@ -462,6 +495,7 @@ int main()
     ProbeGuestHeapRegions();
     ProbeDosDevicesRoot(scratch);
     ProbeUserApc(scratch);
+    ProbeGuestWindow();
 
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);
     std::fflush(stdout);

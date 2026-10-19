@@ -25,6 +25,7 @@ flowchart TD
 * [Xbox XInput: 장치 종류, 구조체, 오류 코드, 키보드 대응](xbox-xinput.md)
 * [Xbox DirectSound: PC와 다른 점, 구조체, 상수, ADPCM, 믹스 빈, 효과 이미지](xbox-dsound.md)
 * [Xbox DVD 드라이브: SCSI pass-through와 보안 페이지 0x3E](xbox-dvd-drive.md)
+* [Xbox 가상 메모리 지도: 물리 메모리 창 0x80000000·0xF0000000](xbox-memory-map.md)
 
 ---
 
@@ -42,3 +43,4 @@ This directory holds the general Xbox knowledge needed to understand rexbox. The
 * [Xbox XInput: device types, structures, error codes, keyboard mapping](xbox-xinput.md)
 * [Xbox DirectSound: differences from PC, structures, constants, ADPCM, mix bins, effects image](xbox-dsound.md)
 * [Xbox DVD drive: SCSI pass-through and security page 0x3E](xbox-dvd-drive.md)
+* [Xbox virtual memory map: the physical windows at 0x80000000 and 0xF0000000](xbox-memory-map.md)
