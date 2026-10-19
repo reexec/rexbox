@@ -15,7 +15,7 @@ A title project's game logic is carried by code mechanically lifted from the ori
 ## 현재 1차 목표
 
 * 1차 호스트는 Win32 x86이다. 어느 정도 진행된 뒤 Win64, Linux x86/x64, Web, Android로 넓힌다.
-* 소비자가 둘(reJSRF, reCT3)인 상태를 유지한다. 한 타이틀에서만 필요한 동작은 계약의 매개변수로 만들고, rexbox 자체는 타이틀을 모른다.
+* 소비자가 둘(reJSRF, reCT3)인 상태를 유지한다. 한 타이틀에서만 필요한 동작은 계약의 매개변수로 만들고, rexbox 자체는 특정 타이틀에 의존하지 않는다.
 * reJSRF가 도달한 기능(로고 시퀀스, 3D 어트랙트 데모, 음악, 설정 오버레이, 와이드스크린, 안티에일리어싱)을 그대로 보존한다.
 
 ## Current First Target

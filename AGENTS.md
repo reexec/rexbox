@@ -6,7 +6,7 @@ The working and coding rules here are those of [nworkers/reJSRF](https://github.
 
 ## 프로젝트 개요
 
-rexbox는 원본 Xbox 타이틀을 정적 재컴파일로 네이티브 실행하는 프로젝트들이 공유하는 **타이틀을 모르는 Xbox 런타임**이다. XBE 파서, 게스트 메모리와 힙, HLE 레지스트리, 재컴파일 코드(xboxrecomp lifter) ABI 어댑터, Xbox 커널·XDK 라이브러리(D3D8, DSOUND, XAPI, XInput)의 HLE 모듈, 호스트 플랫폼 계층(가상 메모리, 스레드, SDL3 표시·입력·오디오)을 담는다.
+rexbox는 원본 Xbox 타이틀을 정적 재컴파일로 네이티브 실행하는 프로젝트들이 공유하는 **공용 Xbox 런타임**이다. 특정 타이틀에 종속되지 않는다. XBE 파서, 게스트 메모리와 힙, HLE 레지스트리, 재컴파일 코드(xboxrecomp lifter) ABI 어댑터, Xbox 커널·XDK 라이브러리(D3D8, DSOUND, XAPI, XInput)의 HLE 모듈, 호스트 플랫폼 계층(가상 메모리, 스레드, SDL3 표시·입력·오디오)을 담는다.
 
 타이틀 프로젝트(예: reJSRF의 Jet Set Radio Future, reCT3의 Crazy Taxi 3)는 이 저장소를 submodule로 가져가 타이틀 계층(프로파일, 디컴파일 코드, 재컴파일 설정)과 앱만 더한다. 원본 x86 코드를 C로 옮기는 재컴파일과 함수를 하나씩 읽을 수 있는 코드로 바꾸는 디컴파일은 타이틀 프로젝트의 일이며, rexbox는 그 코드가 부르는 Xbox를 제공한다.
 
@@ -22,7 +22,7 @@ A title project (Jet Set Radio Future in reJSRF, Crazy Taxi 3 in reCT3) takes th
 
 우선순위:
 
-1. rexbox는 타이틀을 알지 못한다. 타이틀 이름, 타이틀 주소, 타이틀 헤더가 이 저장소에 나타나면 규칙 위반이다. 타이틀이 알려줘야 하는 것(앱 이름, XDK 변수 주소, 표시 기본값)은 공개 계약(`include/rexbox/`)으로 받는다.
+1. rexbox는 특정 타이틀에 의존하지 않는다. 타이틀 이름, 타이틀 주소, 타이틀 헤더가 이 저장소에 나타나면 규칙 위반이다. 타이틀이 알려줘야 하는 것(앱 이름, XDK 변수 주소, 표시 기본값)은 공개 계약(`include/rexbox/`)으로 받는다.
 2. 원본 게임 로직을 보존한다. 재컴파일된 코드가 기준 구현이며 HLE는 그 코드가 부르는 API의 동작을 원본과 같게 한다.
 3. HLE는 API 경계(커널 ordinal, XDK 라이브러리 함수)에서 한다. 하드웨어 레지스터 수준 에뮬레이션(NV2A, MCPX APU LLE)은 API 경계로 해결되지 않을 때만 쓴다.
 4. Win32 x86을 먼저 완성하고, 이후 Win64, Linux x86/x64, Web, Android로 넓힌다. 처음부터 멀티플랫폼 공용 구조로 설계한다.

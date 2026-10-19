@@ -5,7 +5,7 @@
 ![Status](https://img.shields.io/badge/status-experimental-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-rexbox는 [reJSRF](https://github.com/nworkers/reJSRF)(Jet Set Radio Future)와 [reCT3](https://github.com/reexec/reCT3)(Crazy Taxi 3: High Roller)가 함께 쓰는 **타이틀을 모르는 Xbox 런타임**입니다. 두 프로젝트는 원본 Xbox 실행 파일(XBE)의 x86 코드를 [xboxrecomp](https://github.com/sp00nznet/xboxrecomp)로 C로 옮겨 호스트에서 네이티브로 실행하고, 그 코드가 부르는 Xbox 커널·XDK 라이브러리·하드웨어를 rexbox의 HLE가 대신합니다.
+rexbox는 [reJSRF](https://github.com/nworkers/reJSRF)(Jet Set Radio Future)와 [reCT3](https://github.com/reexec/reCT3)(Crazy Taxi 3: High Roller)가 함께 쓰는 **공용 Xbox 런타임**입니다. 특정 타이틀에 종속되지 않아 어떤 Xbox 타이틀에서도 그대로 쓸 수 있습니다. 두 프로젝트는 원본 Xbox 실행 파일(XBE)의 x86 코드를 [xboxrecomp](https://github.com/sp00nznet/xboxrecomp)로 C로 옮겨 호스트에서 네이티브로 실행하고, 그 코드가 부르는 Xbox 커널·XDK 라이브러리·하드웨어를 rexbox의 HLE가 대신합니다.
 
 rexbox는 reJSRF 안에서 만들어진 뒤 이 저장소로 분리되었습니다(이력 포함). 현재 버전은 [VERSION](VERSION)에서 확인할 수 있습니다.
 
