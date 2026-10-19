@@ -148,7 +148,7 @@ void DumpCallProfile(FILE* out)
     std::lock_guard<std::mutex> lock(g_profile_mutex);
     if (g_profiles.empty())
     {
-        std::fprintf(out, "[profile] no direct-call profile (build the generated code with REJSRF_RECOMP_CALL_PROFILE)\n");
+        std::fprintf(out, "[profile] no direct-call profile (build the generated code with REXBOX_RECOMP_CALL_PROFILE)\n");
         return;
     }
     for (CallProfile* profile : g_profiles)
@@ -451,7 +451,7 @@ void rexbox_hle_enter(RexboxHleSlot* slot)
     bridge::BridgeStopAtHle(slot);
 }
 
-// Generated code built with RECOMP_ABI_CHECK (CMake REJSRF_RECOMP_ABI_CHECK)
+// Generated code built with RECOMP_ABI_CHECK (CMake REXBOX_RECOMP_ABI_CHECK)
 // reports a direct call whose callee changed ebx/esi/edi or came back without
 // popping even its return address -- a stack imbalance that otherwise shows up
 // far away. The first 16 are logged with the call site.
@@ -538,7 +538,8 @@ void recomp_icall_fail_log(uint32_t va)
 }
 
 // An unresolved-target stub ran: the disassembler did not find a function at
-// va, so the code there was skipped.
+// va, so the code there was skipped. Called by code lifted with the reJSRF
+// fork of xboxrecomp (RECOMP_STUB_REPORT); upstream stubs report on their own.
 void recomp_unresolved_stub_log(uint32_t va)
 {
     if (bridge::BridgeFirstTimeAt(va))
@@ -555,7 +556,7 @@ void recomp_icall_not_code_log(uint32_t va)
         std::fprintf(stderr, "[recomp] indirect call to %08X is outside code; skipped (returns to %08X)\n", va,
                      bridge::BridgeReturnAddress());
         // Diagnostic: REXBOX_PROFILE_ON_SKIP dumps the direct-call profile at
-        // the first skipped call (generated code built with REJSRF_RECOMP_CALL_PROFILE).
+        // the first skipped call (generated code built with REXBOX_RECOMP_CALL_PROFILE).
         static bool dumped = false;
         if (!dumped && std::getenv("REXBOX_PROFILE_ON_SKIP") != nullptr)
         {
@@ -611,6 +612,72 @@ void recomp_debug_service(uint32_t service, uint32_t arg_va)
     }
 }
 
+// Loop back edges of code lifted with --back-edge-yield (upstream
+// xboxrecomp v0.15.0) call this when g_xbox_guest_cpu_preempt is set. rexbox
+// never sets it (guest threads are host threads with no guest CPU lock), so
+// this is never reached; it exists so such code links.
+void xbox_GuestCpuPreempt(uint32_t /*va*/)
+{
+}
+
+// cpuid for lifted code (upstream xboxrecomp v0.15.0): the Xbox's CPU, a
+// 733 MHz Coppermine Pentium III (family 6, model 8, stepping 3) with MMX,
+// FXSR and SSE; two basic leaves, no extended ones. A leaf above the maximum
+// returns the highest basic leaf's data (Intel SDM vol. 2A, CPUID). Leaf 2
+// describes the P6 TLBs and the 16 KB 4-way L1 caches and no L2.
+void xbox_Cpuid(uint32_t leaf, uint32_t /*subleaf*/, uint32_t out[4])
+{
+    out[0] = out[1] = out[2] = out[3] = 0;
+    switch (leaf > 2 ? 2 : leaf)
+    {
+    case 0:
+        out[0] = 2;
+        out[1] = 0x756E6547u;  // "Genu"
+        out[3] = 0x49656E69u;  // "ineI"
+        out[2] = 0x6C65746Eu;  // "ntel"
+        break;
+    case 1:
+        out[0] = 0x00000683u;
+        out[3] = 0x0383F9FFu;  // FPU..CMOV, PAT, PSE-36, MMX, FXSR, SSE
+        break;
+    default:
+        out[0] = 0x03020101u;
+        out[3] = 0x0C040800u;
+        break;
+    }
+}
+
+// Port I/O of lifted code (upstream xboxrecomp v0.15.0). No device is behind
+// a port here: reads return 0 and writes are dropped, each port reported the
+// first time. Port 0x80C0's bit 5 is the video encoder's field flag, which a
+// title may poll for a vertical blank; it toggles on every read so such a
+// poll ends.
+uint32_t xbox_PortIn(uint32_t port, int width)
+{
+    port &= 0xFFFFu;
+    if (port == 0x80C0u)
+    {
+        static std::atomic<uint32_t> reads{0};
+        return (reads.fetch_add(1) & 1u) << 5;
+    }
+    if (bridge::BridgeFirstTimeAt(0x80000000u | port))
+    {
+        std::fprintf(stderr, "[recomp] in%c port %04X -> 0 (no device)\n",
+                     width == 1 ? 'b' : width == 2 ? 'w' : 'd', port);
+    }
+    return 0;
+}
+
+void xbox_PortOut(uint32_t port, uint32_t value, int width)
+{
+    port &= 0xFFFFu;
+    if (bridge::BridgeFirstTimeAt(0x80010000u | port))
+    {
+        std::fprintf(stderr, "[recomp] out%c port %04X = %08X (dropped)\n",
+                     width == 1 ? 'b' : width == 2 ? 'w' : 'd', port, value);
+    }
+}
+
 // The Xbox CPU runs at 733 MHz. A time-based counter keeps the rate the guest
 // expects on every host architecture.
 uint64_t xbox_ReadTimeStampCounter(void)
@@ -636,8 +703,8 @@ void recomp_trace_esp(const char* name, const char* tag)
     std::fprintf(stderr, "[trace] esp   %s %s\n", name, tag);
 }
 
-// Native buffers paired with guest jmp_buf addresses. JSRF's generated code
-// does not use them, so recomp_guest_longjmp reports "no native counterpart"
+// Native buffers paired with guest jmp_buf addresses. The titles seen so far
+// do not use them, so recomp_guest_longjmp reports "no native counterpart"
 // and the guest's own longjmp runs.
 jmp_buf* recomp_setjmp_slot(uint32_t buf_va)
 {

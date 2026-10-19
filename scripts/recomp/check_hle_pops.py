@@ -9,36 +9,46 @@ the call site. The lifted originals (sub_X_gen) carry the truth as
 the two can be compared mechanically after every change to either side.
 
 Usage:
-    python scripts/recomp/check_hle_pops.py            # exit 1 on any mismatch
-    python scripts/recomp/check_hle_pops.py --all      # also list the matches
+    python check_hle_pops.py --gen <gen root>/<variant> [--extra-symbols <json>] [--all]
+
+--gen is a title's generated directory (holding xdk_symbols.json and gen/),
+--extra-symbols the title's xdk_symbols_extra.json. Exit 1 on any mismatch;
+--all also lists the matches.
 
 Entries marked "no ret in lifted body" are functions whose original falls
-through into another function or has an empty body (jsrf-recomp's inferred
-names); those are checked by hand (docs/analysis/d3d8-adapter.md).
+through into another function or has an empty body (inferred names); those
+are checked by hand.
 """
 
+import argparse
 import glob
 import json
 import pathlib
 import re
 import sys
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
-GEN = ROOT / "gen" / "jsrf_us"
-HLE_DIRS = [ROOT / "src" / "rexbox" / "hle" / name for name in ("d3d8", "dsound", "xinput")]
+REXBOX = pathlib.Path(__file__).resolve().parents[2]
+HLE_DIRS = [REXBOX / "src" / "hle" / name for name in ("d3d8", "dsound", "xinput")]
 
 
 def main():
-    show_all = "--all" in sys.argv
-    symbols = json.load(open(GEN / "xdk_symbols.json", encoding="utf-8"))
-    extra = json.load(open(ROOT / "src/game/jsrf/recomp/xdk_symbols_extra.json", encoding="utf-8"))["symbols"]
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--gen", type=pathlib.Path, required=True, help="<gen root>/<variant>")
+    parser.add_argument("--extra-symbols", type=pathlib.Path, default=None)
+    parser.add_argument("--all", action="store_true", help="also list the matches")
+    args = parser.parse_args()
+
+    symbols = json.load(open(args.gen / "xdk_symbols.json", encoding="utf-8"))
+    extra = []
+    if args.extra_symbols is not None and args.extra_symbols.is_file():
+        extra = json.load(open(args.extra_symbols, encoding="utf-8"))["symbols"]
     name_by_address = {}
     for symbol in symbols + extra:
         if symbol["kind"] == "function":
             name_by_address.setdefault(int(symbol["address"], 16), symbol["name"])
 
     rets = {}
-    for path in glob.glob(str(GEN / "gen" / "recomp_*.c")):
+    for path in glob.glob(str(args.gen / "gen" / "recomp_*.c")):
         source = pathlib.Path(path).read_text(encoding="utf-8", errors="replace")
         for match in re.finditer(r"^void (sub_([0-9A-F]{8}))_gen\(void\)\n\{(.*?)^\}", source, re.S | re.M):
             values = set(re.findall(r"/\* ret(?: (\d+))? \*/", match.group(3)))
@@ -74,7 +84,7 @@ def main():
         ok = pops == expected
         if not ok:
             mismatches += 1
-        if show_all or not ok:
+        if args.all or not ok:
             print(f"{name:48s} lifted ret {lifted} -> {sorted(expected)} args; HLE pops {sorted(pops)}"
                   f"{'' if ok else '   <-- MISMATCH'}")
     print(f"{mismatches} mismatch(es)")

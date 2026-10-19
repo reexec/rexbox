@@ -1,0 +1,78 @@
+name: Release
+
+# Tag verification and releases (docs/design/20261020-i002-github-actions.md).
+# A pushed v<major>.<minor>.<patch> tag must name the VERSION file's value and
+# sit on main; the library then builds and its unit tests run as in CI. When
+# the tag has a release note, docs/release-notes/v<version>.md, a GitHub
+# Release is created with that note as its body. Source only: no built
+# artifacts are attached (GitHub adds the source archives itself).
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Verify the tag (Win32 x86 ${{ matrix.configuration }})
+    runs-on: windows-2022
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+          # The whole history, so the tag's commit can be checked against main.
+          fetch-depth: 0
+
+      - name: Check the tag against VERSION and main
+        shell: powershell
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $version = (Get-Content VERSION -TotalCount 1).Trim()
+          if ($tag -ne "v$version") { throw "tag $tag does not match VERSION $version" }
+          git fetch --quiet origin main:refs/remotes/origin/main
+          git merge-base --is-ancestor $env:GITHUB_SHA refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) { throw "tag $tag is not on main" }
+          Write-Host "tag $tag matches VERSION and is on main"
+
+      - name: Build
+        shell: powershell
+        run: .\scripts\build_win32_x86.ps1 -Configuration ${{ matrix.configuration }}
+
+      - name: Unit tests (CTest)
+        shell: powershell
+        run: ctest --test-dir build\win32_x86 -C ${{ matrix.configuration }} --output-on-failure
+
+  release:
+    name: Create the release from the release note
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+
+      - name: Create the GitHub Release when the release note exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          note="docs/release-notes/${TAG}.md"
+          if [ ! -f "$note" ]; then
+            echo "no release note at $note; the tag is verified but no release is created"
+            exit 0
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $TAG already exists; nothing to do"
+            exit 0
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "rexbox $TAG" --notes-file "$note"
+          echo "created release $TAG from $note (source archives only)"

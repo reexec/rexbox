@@ -95,7 +95,7 @@ bool OpenDisplay(const PresentParameters& pp, std::string* error)
     platform::DisplayConfig config;
     config.width = pp.back_buffer_width;
     config.height = pp.back_buffer_height;
-    config.title = "reJSRF";
+    config.title = "rexbox";  // the application names the window through SetDisplayTitle
     config.api = platform::GlApi::kDesktopGl;
     // REXBOX_DISPLAY=hidden: a GL context without a visible window (frame dumps in unattended runs).
     const char* display = std::getenv("REXBOX_DISPLAY");

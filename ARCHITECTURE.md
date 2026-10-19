@@ -1,0 +1,174 @@
+# rexbox 아키텍처
+
+현재 구현된 코드의 구조를 기록한다. 이 코드는 reJSRF 안에서 만들어졌으므로 각 결정의 근거는 reJSRF의 설계 문서에 있다(예: [i001](https://github.com/nworkers/reJSRF/blob/main/docs/design/20261012-i001-project-bootstrap.md), [i002](https://github.com/nworkers/reJSRF/blob/main/docs/design/20261012-i002-recomp-pipeline.md), [i003](https://github.com/nworkers/reJSRF/blob/main/docs/design/20261012-i003-kernel-hle.md), [i006](https://github.com/nworkers/reJSRF/blob/main/docs/design/20261012-i006-xdk-symbol-binding.md), [i007](https://github.com/nworkers/reJSRF/blob/main/docs/design/20261012-i007-d3d8-hle-first-batch.md), [i012](https://github.com/nworkers/reJSRF/blob/main/docs/design/20261012-i012-d3d8-surfaces-first-frame.md), [i015](https://github.com/nworkers/reJSRF/blob/main/docs/design/20261012-i015-xinput-hle.md), [i017](https://github.com/nworkers/reJSRF/blob/main/docs/design/20261012-i017-dsound-hle.md), [i019](https://github.com/nworkers/reJSRF/blob/main/docs/design/20261012-i019-user-apc.md), [i023](https://github.com/nworkers/reJSRF/blob/main/docs/design/20261012-i023-d3d8-fixed-function-draw.md)). 분리 자체의 근거는 [설계 i001](docs/design/20261020-i001-project-bootstrap.md)이다. 아래에서 "설계 iNNN"은 달리 적지 않으면 reJSRF의 `docs/design/` 문서다.
+
+## 1. 레이어와 CMake 타깃
+
+```mermaid
+flowchart BT
+    PLAT["rexbox_platform<br/>virtual memory, RunGuarded, host threads,<br/>display / input / audio / overlay (SDL3 + OpenGL)"]
+    XBE["rexbox_xbe"]
+    RT["rexbox_runtime<br/>GuestMemory, GuestHeap, HleRegistry,<br/>GuestCpu/GuestExecutor contract, Environment, HleCall, guest lock"]
+    REC["rexbox_recomp<br/>lifter ABI adapter, RecompExecutor, rexbox_hle_enter"]
+    HLE["rexbox_hle_kernel / xapi / dsound / xinput"]
+    D3D["rexbox_hle_d3d8"]
+    TOOLS["rexbox_xbe_info, rexbox_xdk_symbols,<br/>rexbox_kernel_probe, rexbox_dsound_probe, rexbox_d3d8_probe"]
+    subgraph CONSUMER["title project (reJSRF, reCT3)"]
+        GAME["<title>_game: profile, decomp/"]
+        GEN["<title>_recomp: lifted C<br/>(rexbox_add_recompiled_library)"]
+        APP["app (exe): settings, orchestration"]
+    end
+
+    RT --> XBE
+    RT --> PLAT
+    REC --> RT
+    HLE --> RT
+    D3D --> RT
+    D3D -. "display contract" .-> PLAT
+    TOOLS --> HLE
+    GAME --> REC
+    GAME <--> GEN
+    APP --> GAME
+    APP --> HLE
+    APP --> D3D
+```
+
+| 타깃 | 경로 | 책임 | 상태 |
+|---|---|---|---|
+| `rexbox_platform` | `include/rexbox/platform/`, `src/platform/<os>/`, `src/platform/sdl/` | 가상 메모리(쓰인 페이지 기록 `TakeWrittenPages`, Win32 `GetWriteWatch`), `RunGuarded`/`RaiseStop`, `CreateHostThread`와 스레드 CPU 시간, 스레드 샘플링 프로파일러(`sampler.h`, 진단; Win32 구현), 표시 계약(`display.h`: 창 + OpenGL 계열 컨텍스트, GL 함수 포인터, present), 입력 계약(`input.h`: 게임패드 스냅샷, 진동 출력과 세기, 설계 i094), 오디오 계약(`audio.h`: 48 kHz 스테레오 float 출력, pull 렌더 함수, 장치가 없으면 실시간 pacing 스레드), 오버레이 계약(`overlay.h`: Dear ImGui 프레임), 경로 계약(`paths.h`: 실행 파일 폴더, 앱이 `SetApplicationIdentity`로 알려준 이름의 사용자 설정 폴더) | Win32 구현; 표시·입력·오디오·오버레이는 SDL3 백엔드(모든 OS 공유) |
+| `rexbox_xbe` | `src/xbe/` | XBE 파싱 | 구현 |
+| `rexbox_runtime` | `src/runtime/` | `GuestMemory`(based 모델, 스칼라 접근, 페이지별 쓰기 버전 `WriteVersion`, 설계 i046), `GuestHeap`(페이지 할당자, 작은 객체용 slab, 물리 RAM 64 MiB와 가상 메모리 전용 위 64 MiB), `HleRegistry`, `GuestCpu`·`GuestExecutor` 계약, `Environment`, `HleCall`, 게스트 잠금 `rexbox_guest_lock_enter/leave`(C 계약, 설계 i068), 커널 thunk 합성 주소, 정지 보고 `thread_activity`(설계 i060) | 구현 |
+| `rexbox_recomp` | `src/recomp/` | 생성 코드 ABI 전역·콜백(`recomp_abi.c`, `recomp_bridge.cpp`), `RecompExecutor`(게스트 스레드 = 호스트 스레드, `CallGuest`, 스레드별 보고), XDK override 진입점 `rexbox_hle_enter`. lifter 헤더는 `REXBOX_XBOXRECOMP_DIR`에서 온다. upstream xboxrecomp v0.15.0이 선언하는 `g_eflags`, `xbox_Cpuid`, `xbox_PortIn/Out`, `g_xbox_guest_cpu_preempt`/`xbox_GuestCpuPreempt`도 정의하고, reJSRF fork의 `recomp_unresolved_stub_log`도 정의해 두 헤더 모두에 링크된다 | 구현 |
+| `rexbox_hle_kernel` | `src/hle/kernel/` | 커널 export 104개(아래 표) | 부팅이 닿은 서비스 |
+| `rexbox_hle_d3d8` | `src/hle/d3d8/` | Direct3D 8 HLE(아래 표): 어댑터·모드·Caps 질의, 디바이스·서피스·리소스 객체(Xbox 헤더 레이아웃), 라이브러리 전역에 쓰는 상태 setter, 리소스 생성·Lock, 셰이더 핸들, GL 고정 기능 그리기와 정점 프로그램·레지스터 컴바이너 셰이더, 렌더 타깃(표면 메모리로 식별, 설계 i071), 내부 렌더링 배율(설계 i080), MSAA·SMAA·비등방성(설계 i089), Hor+ 와이드스크린(설계 i085), 가상 vblank 시계(설계 i082·i095), 창 제목·설정 기본값 계약 `d3d8_display.h` | export 110개; 프로그래머블 셰이더·조명·안개는 보고만 |
+| `rexbox_hle_xinput` | `src/hle/xinput/` | XAPI 장치·입력 함수 11개(`XInitDevices`, `XGetDevices`, `XGetDeviceChanges`, `XInput*`, `XMountMUA`/`XUnmountMU`) on 플랫폼 입력 계약 | 게임패드 포트 0(호스트 게임패드 또는 키보드), 메모리 유닛 없음 |
+| `rexbox_hle_dsound` | `src/hle/dsound/` | DSOUND 함수 50개(`DirectSoundCreate`, `IDirectSound_*`, `IDirectSoundBuffer_*`) on 플랫폼 오디오 계약: 객체·버퍼 메모리, Lock·Play·Stop·커서(원본 의미), PCM 8/16·Xbox ADPCM 믹서(주파수·볼륨·루프 구간·믹스 빈), 효과 이미지 서술자와 상태 읽기·쓰기 | 3D·EG·LFO·필터·DSP 효과는 `S_OK`만 |
+| `rexbox_hle_xapi` | `src/hle/xapi/` | XDK 라이브러리 HLE | 등록 진입점만 |
+| `rexbox_xbe_info` | `tools/xbe_info/` | XBE 정보 | 구현 |
+| `rexbox_xdk_symbols` | `tools/xdk_symbols/` | XbSymbolDatabase로 XDK 함수·변수 식별 → JSON (`scripts/recomp/regenerate.py`가 사용) | 구현 |
+| `rexbox_kernel_probe` | `tools/kernel_probe/` | 게임 없이 커널 export 검사(56개, CI) | 구현 |
+| `rexbox_dsound_probe` | `tools/dsound_probe/` | 게임 없이 DSOUND export 검사(48개, CI) | 구현 |
+| `rexbox_d3d8_probe` | `tools/d3d8_probe/` | 게임·GPU 없이 D3D8 HLE의 순수 부분 검사(163개, CI) | 구현 |
+
+타이틀의 lift 원본과 비교하는 도구(reJSRF의 `rejsrf_decomp_check`, `rejsrf_d3d8_check`)는 타이틀 프로젝트에 있다.
+
+### 커널 HLE 파일
+
+| 파일 | 내용 |
+|---|---|
+| `kernel_hle.cpp` | 등록, 초기화, thunk 슬롯 바인딩(함수 → 합성 주소, 데이터 → 변수 주소) |
+| `kernel_state.cpp`, `kernel_internal.h` | 디스패처 잠금, 핸들 표, 구조체 오프셋, 공용 도우미 |
+| `kernel_thread.cpp` | KPCR/ETHREAD/스택/TLS 구성, `PsCreateSystemThreadEx`, 종료, 일시정지, 우선순위, 초기 스레드 |
+| `kernel_sync.cpp` | 이벤트, 세마포어, 뮤턴트, 타이머, 대기(경고 가능 사용자 모드 대기는 사용자 APC를 실행하고 `STATUS_USER_APC`) |
+| `kernel_apc.cpp` | 스레드별 사용자 APC 큐(파일 I/O의 `ApcRoutine`), 전달, `NtUserIoApcDispatcher` |
+| `kernel_memory.cpp` | 가상·연속·시스템 메모리, 풀 |
+| `kernel_object.cpp` | `NtClose`, `Ob*` |
+| `kernel_rtl.cpp` | 크리티컬 섹션, 문자열, 시간 변환, 상태 코드(공용 `NtStatusToDosError`) |
+| `kernel_hal.cpp` | IRQL, 시간, 인터럽트·DPC(전달 안 함), PCI, AV, 비휘발 설정, `DbgPrint` |
+| `kernel_crypto.cpp` | `XcSHA*` (SHA-1) |
+| `kernel_file.cpp`, `kernel_vfs.*` | 파일·디렉터리·장치·볼륨·IOCTL, Xbox 이름공간 → 호스트 디렉터리 |
+| `kernel_data.cpp` | 데이터 export, `KeTickCount` 갱신 스레드, 커널 시간 |
+
+### D3D8 HLE 파일
+
+| 파일 | 내용 |
+|---|---|
+| `d3d8_hle.cpp` | 등록, 모듈 상태 |
+| `d3d8_internal.h` | Xbox D3D 상수, 구조체 오프셋(`D3DDISPLAYMODE`, `D3DPRESENT_PARAMETERS`, `D3DCAPS8`), `D3dState` |
+| `d3d8_adapter.cpp`, `d3d8_caps.cpp` | 어댑터·모드·포맷·멀티샘플 질의와 `D3DCAPS8`(reJSRF에서 XDK 4134 원본으로 측정한 표) |
+| `d3d8_device.cpp` | `Direct3D_CreateDevice`(표시 생성, 백버퍼·깊이 서피스, 원본 기본 상태 루틴 실행), `Swap`(vblank 페이싱, 감마, frame dump), `Clear`, `SetRenderTarget`, `Reset`, 뷰포트, 감마 램프 등 |
+| `d3d8_resource.h/.cpp`, `d3d8_create.cpp` | Xbox `D3DResource` 헤더 레이아웃, `ResourceTable`, 리소스 생성·Lock, 연속 메모리 |
+| `d3d8_globals.h/.cpp`, `d3d8_render_state.h`, `d3d8_state.cpp` | 라이브러리 전역(`D3D__RenderState` 등)의 위치와 읽기·쓰기, 상태 setter |
+| `d3d8_shader.*`, `d3d8_vsh.*`, `d3d8_psh.*` | 정점·픽셀 셰이더 객체, NV2A 정점 프로그램 → GLSL, 레지스터 컴바이너 → GLSL |
+| `d3d8_draw.cpp`, `d3d8_fvf.*`, `d3d8_immediate.*`, `d3d8_ff_shader.*` | `Draw*`, FVF 배치, `Begin`/`End` 즉시 모드, 고정 기능 GLSL(텍스처 좌표 생성·변환, 조명) |
+| `d3d8_texture_format.*`, `d3d8_gl_textures.*` | 텍스처 포맷 변환(스위즐, DXT), 텍스처 캐시와 샘플러 |
+| `d3d8_gl.*`, `d3d8_gl_targets.*`, `d3d8_gl_programs.*`, `d3d8_gl_program_cache.*`, `d3d8_gl_buffers.*` | GL 함수 표, 렌더 타깃 FBO·present·BMP 덤프·와이드스크린, 프로그램 캐시와 드라이버 바이너리 캐시, 정점·인덱스 버퍼 |
+| `d3d8_smaa.*`, `d3d8_gamma.*`, `d3d8_vblank.*` | SMAA 1x, 감마 램프, 가상 vblank 시계 |
+| `d3d8_trace.*`, `d3d8_profile.*`, `d3d8_capture.*`, `d3d8_draw_watch.*` | 진단: 한 번 보고, 프레임 프로파일, F9 캡처, 정점 셰이더 감시 |
+| `d3d8_display.cpp`, `include/rexbox/hle/d3d8/d3d8_display.h` | 앱과의 계약: 렌더링 배율, 종횡비, 시작 기본값, 비디오 메모리 정보, `rexbox_d3d8_horizontal_view_scale` |
+
+## 2. 소비자 계약
+
+타이틀 프로젝트는 이 저장소를 `third_party/rexbox`로 두고 `add_subdirectory`한다.
+
+```mermaid
+flowchart LR
+    ROOT["title CMakeLists.txt<br/>rexbox_apply_host_flags()<br/>REXBOX_XBOXRECOMP_DIR, REXBOX_BUILD_TOOLS"] --> SUB["add_subdirectory(third_party/rexbox)"]
+    SUB --> T["rexbox_* targets, imgui, REXBOX_PLATFORM/ARCH"]
+    T --> GAME["<title>_game"]
+    GEN["gen/<variant>/gen"] --> REC["rexbox_add_recompiled_library(<title>_recomp GEN_DIR ... TITLE <title>_game)"]
+    GAME --> APP["app"]
+    REC --> APP
+```
+
+* `REXBOX_XBOXRECOMP_DIR`: lifter ABI 헤더와 파이프라인 도구를 가진 xboxrecomp 체크아웃. 기본은 rexbox의 submodule(upstream [sp00nznet/xboxrecomp](https://github.com/sp00nznet/xboxrecomp) v0.15.0). 소비자가 자기 fork를 고정하면 이 변수로 가리킨다. 생성 코드와 `rexbox_recomp`는 같은 체크아웃에서 와야 하며 `rexbox_add_recompiled_library`가 헤더 해시로 확인한다.
+* `rexbox_apply_host_flags()`: `/utf-8 /permissive- /EHa`, `NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS`. 디렉터리 범위이므로 소비자도 자기 루트에서 부른다. `/EHa`는 `RaiseStop`의 unwind가 모든 레이어를 지나므로 프로그램 전체에 필요하다.
+* `rexbox_check_license(target)`, `rexbox_strict_warnings(target)`: 소비자의 타깃에도 적용한다.
+* `rexbox_add_recompiled_library(<target> GEN_DIR <dir> TITLE <title lib>)`: 생성 코드 타깃. 옵션 `REXBOX_RECOMP_CALL_PROFILE`, `REXBOX_RECOMP_ABI_CHECK`.
+* 플랫폼 계약으로 앱이 알려주는 것: `platform::SetDisplayTitle`(창 제목), `platform::SetApplicationIdentity`(사용자 설정 폴더 이름), `platform::SetOverlayBuilder`(오버레이 내용), `hle::d3d8::SetDisplayDefaults`(설정 파일의 표시 기본값), `platform::SetRumbleStrength`.
+* 재컴파일 스크립트: `scripts/recomp/regenerate.py`는 `run(xbe=..., variant=..., title_dir=..., gen_root=..., override_dirs=[...], symbol_tool_candidates=[...], root=...)`으로 타이틀의 wrapper가 부른다. `xbe_variant.py`는 XBE 신원(MD5, 인증서)을 출력하고 변형을 검사하며, `check_hle_pops.py`와 `find_pointer_targets.py`도 경로를 인자로 받는다.
+
+## 3. 실행 흐름
+
+```mermaid
+sequenceDiagram
+    participant App as title app
+    participant K as hle::kernel
+    participant X as RecompExecutor
+    participant G as lifted code (guest thread)
+    participant D3D as hle::d3d8
+    participant P as platform display (SDL3)
+    App->>App: load default.xbe, GuestMemory, place XBE, GuestHeap, SetEnvironment
+    App->>K: RegisterKernelHle, InitializeKernel(game dir, hdd), BindKernelImports
+    App->>X: Attach (offset, code range)
+    App->>K: StartInitialThread(image)
+    K->>X: StartThread(entry, esp, KPCR)
+    X->>G: host thread: RunGuarded(entry)
+    G->>K: PsCreateSystemThreadEx -> K->>X: StartThread(SystemRoutine)
+    G->>D3D: Direct3D_CreateDevice
+    D3D->>P: CreateDisplay -> SDL3 window + GL 3.3
+    App->>X: WaitForThreads -> reports
+```
+
+## 4. 주요 계약
+
+* **게스트 주소**: 32비트 `GuestAddress`. C++은 `GuestMemory::Translate`/`Read32`/`Write32`, 생성·디컴파일 C는 `MEM32` 등.
+* **레지스터**: HLE와 런타임은 `runtime::GuestCpu`로만 접근한다. 생성 코드의 TLS 전역을 아는 것은 `rexbox_recomp`뿐이다.
+* **HLE 함수**: `void()`; 안에서 `runtime::HleCall`로 stdcall 인자(`[esp+4+4i]`)·fastcall 레지스터를 읽고 `Return(value, n)`으로 eax와 esp를 맞춘다.
+* **XDK override**: `regenerate.py`가 HLE 대상 라이브러리의 함수마다 `sub_X`를 생성해 `rexbox_hle_enter(slot)`로 같은 이름의 export를 부른다. 없으면 `stopped at unimplemented XDK function <library> <name>`으로 멈춘다(`REXBOX_HLE_FALLBACK=lifted`면 원본 `sub_X_gen` 실행).
+* **스레드**: 커널이 게스트 메모리에 KPCR/ETHREAD/스택/TLS를 만들고 `GuestExecutor::StartThread`에 맡긴다. 종료는 `ExitThread`(SEH 해제, `/EHa`).
+* **동기화**: 디스패처 객체 상태는 게스트 메모리의 `SignalState`, 대기는 전역 디스패처 잠금과 condition variable.
+* **표시·오디오·입력·파일**: reJSRF ARCHITECTURE §4와 같다. 창 제목은 앱이 `SetDisplayTitle`로 준 문자열에 GL 버전과 FPS를 붙인다. 파일은 `\Device\CdRom0` → 게임 디렉터리, `\Device\Harddisk0\Partition1..5` → `<hdd root>/PartitionN`.
+
+## 5. 빌드 구성과 환경 변수
+
+* 생성 코드 `/w /bigobj /MP`, 우리 타깃 `/W4`. 게스트 스레드의 호스트 스택은 64 MiB(`CreateHostThread`가 명시). 앱은 `/LARGEADDRESSAWARE`로 링크하고 이미지 기본 스택은 작게 둔다(reJSRF issue #25).
+* 실행 시 환경 변수(모두 `REXBOX_` 접두사; 타이틀의 HDD 루트 같은 앱 변수는 타이틀이 정한다): `REXBOX_TRACE_FILES`, `REXBOX_HLE_FALLBACK=lifted`, `REXBOX_DISPLAY=none|hidden`, `REXBOX_AUDIO=none`, `REXBOX_DSOUND_TRACE=1`, `REXBOX_FRAME_LOG=<n>`, `REXBOX_FRAME_DUMP=<n>[,…]`, `REXBOX_FRAME_DUMP_DIR`, `REXBOX_SHADER_DUMP=1`, `REXBOX_D3D8_TRACE=1`, `REXBOX_D3D8_PROFILE=<n>`, `REXBOX_SAMPLE=<first>-<last>[:<file>]`, `REXBOX_GL_CALLS=1`, `REXBOX_SHADER_CACHE=<폴더>|0`, `REXBOX_RENDER_SCALE=<1~8>`, `REXBOX_VSYNC=off|on|adaptive`, `REXBOX_INPUT=keyboard`, `REXBOX_DXT=cpu`, `REXBOX_STALL_REPORT=<초>`, `REXBOX_STALL_DUMP=<파일>`, `REXBOX_GUEST_LOCK_TIMEOUT_MS`, `REXBOX_VSH_WATCH`, `REXBOX_CAPTURE_FRAME=<n>`(또는 창에서 F9), `REXBOX_HLE_TRACE=<n>`, `REXBOX_TRACE_MEMORY`, `REXBOX_HEAP_CHECK=<주소>`, `REXBOX_WATCH32=<주소,…>`, `REXBOX_PROFILE_ON_SKIP`, `REXBOX_SKIP_DUMP=<파일>`, `REXBOX_ABI_IGNORE`, `REXBOX_ABI_ESP_ONLY`. 의미는 reJSRF ARCHITECTURE §5와 같다. lifted 코드의 포트 I/O는 `[recomp] in/out port`로 처음 한 번 보고된다.
+* 테스트와 CI: probe 세 개가 CTest에 등록되어 `ctest -C <config>`로 돈다. `.github/workflows/ci.yml`은 `main` push와 PR에서 빌드와 `ctest`를, `release.yml`은 `v*` 태그에서 `VERSION`·`main` 검사와 같은 빌드·테스트를 하고 `docs/release-notes/<tag>.md`가 있으면 GitHub Release(소스만)를 만든다([설계 i002](docs/design/20261020-i002-github-actions.md)).
+* `third_party/SDL`(release-3.4.18, zlib) 정적 링크, `third_party/imgui`(v1.93.0, MIT), `third_party/smaa`(MIT), `third_party/XbSymbolDatabase`(MIT, 도구에만), `third_party/xboxrecomp`(upstream v0.15.0, MIT; LGPL 파일은 가드로 금지).
+
+---
+
+# rexbox Architecture
+
+This records the structure of the code as implemented now. The code was built inside reJSRF, so the reasons for each decision are in reJSRF's design documents (linked above); the split itself is [design i001](docs/design/20261020-i001-project-bootstrap.md). "Design iNNN" below means a reJSRF `docs/design/` document unless said otherwise.
+
+## 1. Layers and CMake targets
+
+The diagram and tables above apply. In short: `rexbox_platform` (virtual memory with written-page queries, guarded runs, host threads and their CPU time, a sampling profiler, and the display, input, audio, overlay and paths contracts implemented on SDL3 in `src/platform/sdl/`; the application names itself through `SetDisplayTitle` and `SetApplicationIdentity`) ← `rexbox_runtime` (guest memory: a 128 MiB address space whose low 64 MiB stands for physical RAM; a page heap with slabs; HLE registry, the GuestCpu/GuestExecutor contract, Environment, HleCall, the guest lock, the stall monitor) ← `rexbox_recomp` (lifter ABI adapter and `RecompExecutor`, one host thread per guest thread; it defines the state and services both upstream xboxrecomp v0.15.0 and reJSRF's fork declare) and the HLE modules: the kernel (104 exports, one file per area), D3D8 (110 exports on OpenGL 3.3: fixed-function and shader draws, render targets keyed by surface memory, render scale, MSAA/SMAA/anisotropy, Hor+ widescreen, a virtual vblank clock), DSOUND (50 functions with a guest-memory mixer), XInput (11 XAPI device and input functions). Tools: `rexbox_xbe_info`, `rexbox_xdk_symbols`, and the three probes that run in CI without game data (56, 48 and 163 checks). Tools that compare a title's code with its lifted originals (reJSRF's `rejsrf_decomp_check`, `rejsrf_d3d8_check`) stay in the title project.
+
+## 2. Consumer contract
+
+A title project keeps this repository as `third_party/rexbox` and adds it with `add_subdirectory`. `REXBOX_XBOXRECOMP_DIR` names the xboxrecomp checkout the lifter ABI header and the pipeline tools come from (default: rexbox's submodule, upstream v0.15.0; a consumer with its own fork points it there; `rexbox_add_recompiled_library` checks the generated header's hash against it). `rexbox_apply_host_flags()` sets the directory-scoped compiler settings the whole program must share (`/EHa` above all, since `RaiseStop` unwinds through every layer), so the consumer calls it at its root too. `rexbox_check_license` and `rexbox_strict_warnings` apply to the consumer's targets as well. `rexbox_add_recompiled_library(<target> GEN_DIR <dir> TITLE <title lib>)` builds the generated code with the options `REXBOX_RECOMP_CALL_PROFILE` and `REXBOX_RECOMP_ABI_CHECK`. The application tells the runtime what only it knows through the contracts: `platform::SetDisplayTitle`, `platform::SetApplicationIdentity`, `platform::SetOverlayBuilder`, `hle::d3d8::SetDisplayDefaults`, `platform::SetRumbleStrength`. `scripts/recomp/regenerate.py` is called by the title's wrapper through `run(xbe=..., variant=..., title_dir=..., gen_root=..., override_dirs=[...], symbol_tool_candidates=[...], root=...)`; `xbe_variant.py` prints an XBE's identity and checks a variant; `check_hle_pops.py` and `find_pointer_targets.py` take their paths as arguments.
+
+## 3. Execution flow
+
+The app builds guest memory, places the XBE, creates the heap and installs the Environment; registers the HLE; initializes the kernel (data exports, VFS with the game directory and the HDD root) and binds the kernel imports; attaches the executor; and starts the entry point as the first guest thread. When the game calls `Direct3D_CreateDevice`, the D3D8 HLE opens the SDL3 window with a GL 3.3 context on that guest thread. The kernel builds each thread's KPCR/ETHREAD/stack/TLS and hands it to `RecompExecutor::StartThread`; the app waits for the threads and prints their reports.
+
+## 4. Key contracts
+
+Guest addresses are 32-bit `GuestAddress` values translated through `GuestMemory`; registers are reached through `runtime::GuestCpu` only; HLE functions are `void()` using `runtime::HleCall` and `Return(value, n)`; generated XDK overrides enter through `rexbox_hle_enter(slot)` and stop at an unimplemented function unless `REXBOX_HLE_FALLBACK=lifted`; threads, synchronization, display, audio, input and files behave as reJSRF's ARCHITECTURE §4 describes.
+
+## 5. Build configuration and environment variables
+
+Generated code builds with `/w /bigobj /MP`, our targets with `/W4`; guest threads get 64 MiB host stacks. Every run-time variable of the runtime carries the `REXBOX_` prefix (the list above; meanings as in reJSRF's ARCHITECTURE §5); an application's own variables, such as its HDD root, are the title's. Port I/O from lifted code is reported once per port as `[recomp] in/out port`. Tests and CI: the three probes are registered with CTest and run with `ctest -C <config>`; `ci.yml` builds and runs `ctest` on pushes to `main` and pull requests, and `release.yml` verifies a `v*` tag against `VERSION` and `main`, runs the same build and tests, and creates a source-only GitHub Release when `docs/release-notes/<tag>.md` exists ([design i002](docs/design/20261020-i002-github-actions.md)). Third-party: SDL3 release-3.4.18 (zlib, static), Dear ImGui v1.93.0 (MIT), SMAA (MIT), XbSymbolDatabase (MIT, tools only), xboxrecomp upstream v0.15.0 (MIT; its LGPL files are blocked by the license guard).

@@ -936,7 +936,7 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
             float y = 0.0f;
             if (source.immediate != nullptr)
             {
-                // Begin/End vertices: the position register (JSRF's shadow pass draws its quad so).
+                // Begin/End vertices: the position register (a title's shadow pass draws its quad so).
                 const auto& vertices = source.immediate->vertices();
                 if (i >= vertices.size())
                 {

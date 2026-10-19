@@ -41,6 +41,8 @@ RECOMP_TLS uint32_t g_mxcsr;
 RECOMP_TLS uint32_t g_fs_base;
 RECOMP_TLS uint32_t g_seh_ebp;
 RECOMP_TLS int g_df;
+/* EFLAGS image for pushfd/popfd (upstream xboxrecomp v0.15.0). */
+RECOMP_TLS uint32_t g_eflags;
 RECOMP_TLS RecompXmm g_xmm0, g_xmm1, g_xmm2, g_xmm3;
 RECOMP_TLS RecompXmm g_xmm4, g_xmm5, g_xmm6, g_xmm7;
 RECOMP_TLS RecompMmx g_mm0, g_mm1, g_mm2, g_mm3;
@@ -51,12 +53,20 @@ volatile uint32_t g_icall_trace[ICALL_TRACE_SIZE];
 volatile uint32_t g_icall_trace_idx;
 volatile uint64_t g_icall_count;
 
+/* RECOMP_BACK_EDGE's quantum flag (upstream xboxrecomp v0.15.0, code lifted
+ * with --back-edge-yield). rexbox runs guest threads as free host threads
+ * with no guest CPU lock, so nothing ever sets it. */
+int32_t g_xbox_guest_cpu_preempt;
+
 /* x87 FINIT control word: all exceptions masked, 64-bit precision, round to
  * nearest. */
 #define REXBOX_X87_DEFAULT_CONTROL_WORD 0x037F
 
 /* MXCSR reset value: all SSE exceptions masked, round to nearest. */
 #define REXBOX_SSE_DEFAULT_MXCSR 0x1F80u
+
+/* EFLAGS at thread start: bit 1 always set, IF set. */
+#define REXBOX_EFLAGS_DEFAULT 0x00000202u
 
 void rexbox_recomp_set_memory(ptrdiff_t offset, uint32_t code_lo, uint32_t code_hi)
 {
@@ -78,6 +88,7 @@ void rexbox_recomp_reset_thread(uint32_t esp, uint32_t fs_base)
     g_fs_base = fs_base;
     g_seh_ebp = 0;
     g_df = 0;
+    g_eflags = REXBOX_EFLAGS_DEFAULT;
 }
 
 void rexbox_recomp_get_gprs(RexboxRecompGprs* out)

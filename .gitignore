@@ -1,0 +1,21 @@
+# Build trees and local tool installs.
+build/
+out/
+
+# Reference checkouts fetched for study only.
+third_party/refs/
+
+# Local run artifacts of the probes and tools.
+*.log
+hdd/
+cache/
+
+# IDE and OS clutter.
+.vs/
+.vscode/
+*.user
+*.suo
+*.tmp
+*.obj
+__pycache__/
+*.pyc

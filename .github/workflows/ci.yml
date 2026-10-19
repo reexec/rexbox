@@ -1,0 +1,48 @@
+name: CI
+
+# The fast gate (docs/design/20261020-i002-github-actions.md): every push to
+# main and every pull request configures the library, builds it with its
+# tools, and runs the unit tests (the probes, through CTest). rexbox holds no
+# game data, so this is the whole library.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Run by hand on a task branch (gh workflow run ci.yml --ref <branch>) to
+  # check a CI change before any pull request exists.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  win32:
+    name: Win32 x86 build and tests
+    # Pinned rather than windows-latest: build_win32_x86.ps1 picks its
+    # generator from the installed Visual Studio, so a floating image would
+    # silently change the toolchain.
+    runs-on: windows-2022
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v7
+        with:
+          # rexbox_recomp compiles against xboxrecomp's pinned ABI header;
+          # SDL, imgui, smaa and XbSymbolDatabase are built from source.
+          submodules: true
+
+      - name: Build
+        shell: powershell
+        run: .\scripts\build_win32_x86.ps1 -Configuration ${{ matrix.configuration }}
+
+      - name: Unit tests (CTest)
+        shell: powershell
+        run: ctest --test-dir build\win32_x86 -C ${{ matrix.configuration }} --output-on-failure

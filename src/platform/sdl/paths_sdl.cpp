@@ -4,8 +4,24 @@
 
 #include <SDL3/SDL.h>
 
+#include <string>
+
 namespace rexbox::platform
 {
+
+namespace
+{
+
+std::string g_organization;
+std::string g_application;
+
+}  // namespace
+
+void SetApplicationIdentity(const std::string& organization, const std::string& application)
+{
+    g_organization = organization;
+    g_application = application;
+}
 
 std::string ExecutableDirectory()
 {
@@ -15,7 +31,11 @@ std::string ExecutableDirectory()
 
 std::string UserSettingsDirectory()
 {
-    char* pref = SDL_GetPrefPath("reJSRF", "reJSRF");
+    if (g_application.empty())
+    {
+        return std::string();
+    }
+    char* pref = SDL_GetPrefPath(g_organization.c_str(), g_application.c_str());
     if (pref == nullptr)
     {
         return std::string();

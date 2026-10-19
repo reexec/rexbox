@@ -1,12 +1,12 @@
 # rexbox: the title-agnostic Xbox runtime. Nothing in this directory may name
-# Jet Set Radio Future or include rejsrf/ headers; that is what lets another
-# title reuse it unchanged.
+# a title or include a title's headers; that is what lets any title reuse it
+# unchanged.
 
 # XBE image parsing. Pure data; no platform dependency.
 add_library(rexbox_xbe STATIC
     xbe/xbe_image.cpp
 )
-target_include_directories(rexbox_xbe PUBLIC "${PROJECT_SOURCE_DIR}/include")
+target_include_directories(rexbox_xbe PUBLIC "${rexbox_SOURCE_DIR}/include")
 
 # Runtime core: guest memory, XBE placement, the HLE registry.
 add_library(rexbox_runtime STATIC
@@ -28,7 +28,13 @@ add_library(rexbox_recomp STATIC
     recomp/recomp_bridge.cpp
     recomp/recomp_runtime.cpp
 )
-target_include_directories(rexbox_recomp PRIVATE "${REJSRF_XBOXRECOMP_DIR}/templates/runtime")
+target_include_directories(rexbox_recomp PRIVATE "${REXBOX_XBOXRECOMP_DIR}/templates/runtime")
+if(MSVC)
+    # recomp_abi.c includes the lifter's header as upstream wrote it; its
+    # constant casts (C4310, upstream v0.15.0's x87 helpers) are not ours to
+    # change, and the file is compiled at /W4 like the rest of rexbox.
+    target_compile_options(rexbox_recomp PRIVATE /wd4310)
+endif()
 target_link_libraries(rexbox_recomp PUBLIC rexbox_runtime)
 # The fork's SSE2 intrinsics for the XMM helpers are opt-in: by default every
 # target that includes recomp_types.h gets the plain C helpers (the upstream
@@ -119,14 +125,10 @@ target_link_libraries(rexbox_hle_d3d8 PUBLIC rexbox_runtime)
 
 # SMAA (MIT, third_party/smaa): its shader source as a string header and its
 # lookup textures (docs/design/20261017-i089-anti-aliasing.md).
-set(REJSRF_SMAA_DIR "${PROJECT_SOURCE_DIR}/third_party/smaa")
-if(NOT EXISTS "${REJSRF_SMAA_DIR}/SMAA.hlsl")
-    message(FATAL_ERROR "third_party/smaa is missing; run: git submodule update --init")
-endif()
-include("${PROJECT_SOURCE_DIR}/cmake/embed_text.cmake")
-embed_text(INPUT "${REJSRF_SMAA_DIR}/SMAA.hlsl" OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/smaa_source.h"
+include(embed_text)
+embed_text(INPUT "${REXBOX_SMAA_DIR}/SMAA.hlsl" OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/smaa_source.h"
            NAME kSmaaSource)
-target_include_directories(rexbox_hle_d3d8 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" "${REJSRF_SMAA_DIR}/Textures")
+target_include_directories(rexbox_hle_d3d8 PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated" "${REXBOX_SMAA_DIR}/Textures")
 
 add_library(rexbox_hle INTERFACE)
 target_link_libraries(rexbox_hle INTERFACE

@@ -1,6 +1,6 @@
 // Device capabilities. The Xbox library answers from a constant D3DCAPS8
 // table (the GPU is always the NV2A); this is that table, measured with
-// rejsrf_d3d8_check --dump and re-checked by its comparison mode.
+// reJSRF's rejsrf_d3d8_check --dump and re-checked by its comparison mode.
 
 #include "d3d8_internal.h"
 
