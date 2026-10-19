@@ -94,7 +94,8 @@ jobs:
           fi
 
       - name: Build and test
-        run: scripts/build_linux.sh ${{ matrix.arch }} ${{ matrix.configuration }}
+        # Through bash: the checkout may not carry the execute bit.
+        run: bash scripts/build_linux.sh ${{ matrix.arch }} ${{ matrix.configuration }}
 
   release:
     name: Create the release from the release note
