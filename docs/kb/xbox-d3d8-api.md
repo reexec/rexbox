@@ -53,9 +53,9 @@ Most are `__stdcall` (the callee removes its arguments with `ret n`); some LTCG 
 
 ## 5. 하드웨어 접근 지점 / Where the hardware is touched
 
-`Direct3D_CreateDevice` → `CMiniport_InitHardware`가 NV2A MMIO(`0xFD000000` 이상)를 읽는 첫 지점이다([boot-frontier](../analysis/boot-frontier.md)). 그 앞의 어댑터·모드·Caps 질의는 라이브러리 안의 표와 커널 AV 서비스만 쓴다. 그리기 명령은 라이브러리가 push buffer에 쌓아 GPU가 소비하므로, API 수준 HLE는 push buffer를 만들지 않고 각 `D3DDevice_*` 호출을 호스트 그래픽 API로 바꾼다.
+`Direct3D_CreateDevice` → `CMiniport_InitHardware`가 NV2A MMIO(`0xFD000000` 이상)를 읽는 첫 지점이다([boot-frontier](../analysis/boot-frontier.md)). 그 앞의 어댑터·모드·Caps 질의는 라이브러리 안의 표와 커널 AV 서비스만 쓴다. 그리기 명령은 라이브러리가 push buffer에 쌓아 GPU가 소비하므로, API 수준 HLE는 push buffer를 만들지 않고 각 `D3DDevice_*` 호출을 호스트 그래픽 API로 바꾼다. 다만 타이틀이 `D3DDevice_BeginPush`/`EndPush`로 받은 버퍼에 NV2A 메서드를 직접 쓰기도 하며, rexbox는 그중 `SET_BEGIN_END`(`0x17FC`)와 `INLINE_ARRAY`(`0x1818`)를 그리기로 해석한다([설계 i007-push-buffer](../design/20261020-i007-push-buffer.md)).
 
-`Direct3D_CreateDevice` → `CMiniport_InitHardware` is the first point that reads NV2A MMIO (`0xFD000000` and up) ([boot-frontier](../analysis/boot-frontier.md)); the adapter, mode and caps queries before it use only tables inside the library and the kernel's AV services. Drawing commands are queued by the library into a push buffer the GPU consumes, so an API-level HLE never builds a push buffer and translates each `D3DDevice_*` call to the host graphics API instead.
+`Direct3D_CreateDevice` → `CMiniport_InitHardware` is the first point that reads NV2A MMIO (`0xFD000000` and up) ([boot-frontier](../analysis/boot-frontier.md)); the adapter, mode and caps queries before it use only tables inside the library and the kernel's AV services. Drawing commands are queued by the library into a push buffer the GPU consumes, so an API-level HLE never builds a push buffer and translates each `D3DDevice_*` call to the host graphics API instead. A title may still write NV2A methods into a buffer from `D3DDevice_BeginPush`/`EndPush` itself; rexbox interprets `SET_BEGIN_END` (`0x17FC`) and `INLINE_ARRAY` (`0x1818`) there as draws ([design i007-push-buffer](../design/20261020-i007-push-buffer.md)).
 
 ## 6. 리소스 헤더 / Resource headers
 

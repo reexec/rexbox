@@ -27,6 +27,7 @@
 #include "d3d8_render_state.h"
 #include "d3d8_resource.h"
 #include "d3d8_psh.h"
+#include "d3d8_push.h"
 #include "d3d8_shader.h"
 #include "d3d8_state.h"
 #include "d3d8_trace.h"
@@ -1253,6 +1254,35 @@ void D3DDevice_CopyRects()
 }
 
 }  // namespace
+
+void DrawInlineVertices(uint32_t primitive, GuestAddress data, uint32_t bytes)
+{
+    const PipelineState& pipeline = Pipeline();
+    uint32_t stride = 0;
+    if ((pipeline.vertex_shader & fvf::kProgramHandle) != 0)
+    {
+        const ProgramShader* shader =
+            FindProgramShader(pipeline.input_shader != 0 ? pipeline.input_shader : pipeline.vertex_shader);
+        stride = shader != nullptr ? shader->declaration.stream_bytes[0] : 0;
+    }
+    else
+    {
+        VertexLayout layout;
+        stride = DecodeFvf(pipeline.vertex_shader, &layout) ? layout.stride : 0;
+    }
+    if (stride == 0)
+    {
+        ReportOncePer("push buffer stride", pipeline.vertex_shader, [&] {
+            return Format("push buffer draw with vertex shader %08X has no stream 0 stride; not drawn",
+                          pipeline.vertex_shader);
+        });
+        return;
+    }
+    VertexSource source;
+    source.base = data;
+    source.stride = stride;
+    Draw("push buffer", primitive, bytes / stride, IndexSource{}, source);
+}
 
 void RegisterDrawExports(runtime::HleRegistry& registry)
 {

@@ -120,6 +120,7 @@ add_library(rexbox_hle_d3d8 STATIC
     hle/d3d8/d3d8_smaa.cpp
     hle/d3d8/d3d8_draw.cpp
     hle/d3d8/d3d8_draw_watch.cpp
+    hle/d3d8/d3d8_push.cpp
 )
 target_link_libraries(rexbox_hle_d3d8 PUBLIC rexbox_runtime)
 
