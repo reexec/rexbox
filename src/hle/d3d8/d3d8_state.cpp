@@ -7,6 +7,8 @@
 #include "d3d8_trace.h"
 #include "d3d8_vsh.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace rexbox::hle::d3d8
@@ -171,34 +173,98 @@ void D3DDevice_SetTransform()
     call.Return(kD3dOk, 2);
 }
 
+// The viewport mapping of the runtime's vertex-shader epilogue (c[58] scale,
+// c[59] offset; vsh::ViewportConstants) applied to the columns of a matrix
+// whose products are clip coordinates, or undone (`inverse`).
+std::array<float, 16> MapViewport(const std::array<float, 16>& m, bool inverse)
+{
+    const Viewport& vp = State().viewport;
+    float scale[4] = {};
+    float offset[4] = {};
+    vsh::ViewportConstants(vp.x, vp.y, vp.width, vp.height, scale, offset);
+    std::array<float, 16> result = {};
+    for (uint32_t row = 0; row < 4; ++row)
+    {
+        const float w = m[row * 4 + 3];
+        for (uint32_t column = 0; column < 3; ++column)
+        {
+            const float value = m[row * 4 + column];
+            result[row * 4 + column] =
+                inverse ? (value - w * offset[column]) / scale[column] : value * scale[column] + w * offset[column];
+        }
+        result[row * 4 + 3] = w;
+    }
+    return result;
+}
+
+std::array<float, 16> MultiplyMatrices(const std::array<float, 16>& a, const std::array<float, 16>& b)
+{
+    std::array<float, 16> result = {};
+    for (uint32_t row = 0; row < 4; ++row)
+    {
+        for (uint32_t column = 0; column < 4; ++column)
+        {
+            float sum = 0.0f;
+            for (uint32_t k = 0; k < 4; ++k)
+            {
+                sum += a[row * 4 + k] * b[k * 4 + column];
+            }
+            result[row * 4 + column] = sum;
+        }
+    }
+    return result;
+}
+
 // void D3DDevice_GetProjectionViewportMatrix(D3DMATRIX* pProjectionViewport)
-// The projection times the viewport mapping into the screen coordinates the
-// runtime's vertex-shader epilogue produces (c[58] scale, c[59] offset;
-// vsh::ViewportConstants), so a title's own screen-space math agrees with it.
+// The projection times the viewport mapping into the epilogue's screen
+// coordinates, so a title's own screen-space math agrees with the runtime.
 void D3DDevice_GetProjectionViewportMatrix()
 {
     HleCall call;
     const GuestAddress out = call.Arg(0);
     if (out != 0)
     {
-        const Viewport& vp = State().viewport;
-        float scale[4] = {};
-        float offset[4] = {};
-        vsh::ViewportConstants(vp.x, vp.y, vp.width, vp.height, scale, offset);
-        const std::array<float, 16>& p = g_pipeline.transforms[ts::kProjection];
-        float m[16] = {};
-        for (uint32_t row = 0; row < 4; ++row)
-        {
-            const float w = p[row * 4 + 3];
-            for (uint32_t column = 0; column < 3; ++column)
-            {
-                m[row * 4 + column] = p[row * 4 + column] * scale[column] + w * offset[column];
-            }
-            m[row * 4 + 3] = w;
-        }
-        std::memcpy(Memory().Translate(out), m, sizeof(m));
+        const std::array<float, 16> m = MapViewport(g_pipeline.transforms[ts::kProjection], false);
+        std::memcpy(Memory().Translate(out), m.data(), 64);
     }
     call.Return(kD3dOk, 1);
+}
+
+// void D3DDevice_SetModelView(const D3DMATRIX* pModelView, const D3DMATRIX* pInverseModelView,
+//     const D3DMATRIX* pComposite)
+// Fixed-function vertices then go through these instead of world x view and
+// the projection; a null pModelView returns to them. pComposite is model view
+// x projection x viewport (inferred; the first call traces how far it is from
+// the product this runtime would form). The inverse is derived where needed.
+void D3DDevice_SetModelView()
+{
+    HleCall call;
+    runtime::GuestMemory& memory = Memory();
+    const GuestAddress model_view = call.Arg(0);
+    const GuestAddress composite = call.Arg(2);
+    g_pipeline.model_view_set = model_view != 0;
+    g_pipeline.composite_set = model_view != 0 && composite != 0;
+    if (g_pipeline.model_view_set)
+    {
+        std::memcpy(g_pipeline.model_view.data(), memory.Translate(model_view), 64);
+    }
+    if (g_pipeline.composite_set)
+    {
+        std::memcpy(g_pipeline.composite.data(), memory.Translate(composite), 64);
+        const std::array<float, 16> formed =
+            MapViewport(MultiplyMatrices(g_pipeline.model_view, g_pipeline.transforms[ts::kProjection]), false);
+        float largest = 0.0f;
+        for (uint32_t i = 0; i < 16; ++i)
+        {
+            largest = std::max(largest, std::fabs(formed[i] - g_pipeline.composite[i]));
+        }
+        TraceOnce("set model view",
+                  Format("SetModelView: composite row 3 (%g, %g, %g, %g); model view x projection x viewport differs "
+                         "by at most %g",
+                         g_pipeline.composite[12], g_pipeline.composite[13], g_pipeline.composite[14],
+                         g_pipeline.composite[15], largest));
+    }
+    call.Return(kD3dOk, 3);
 }
 
 // void D3DDevice_SetStreamSource(UINT StreamNumber, D3DVertexBuffer* pStreamData, UINT Stride)
@@ -220,6 +286,46 @@ void D3DDevice_SetStreamSource()
         }
         SetStream(stream, buffer, call.Arg(2));
     }
+    call.Return(kD3dOk, 3);
+}
+
+// void D3DDevice_SetVertexShaderInput(DWORD Handle, UINT StreamCount, const D3DSTREAM_INPUT* pStreamInputs)
+// While Handle is non-zero, its declaration and these streams replace the
+// current shader's declaration and SetStreamSource's streams (draws read
+// stream 0); Handle 0 or no inputs turns the override off.
+void D3DDevice_SetVertexShaderInput()
+{
+    HleCall call;
+    runtime::GuestMemory& memory = Memory();
+    const uint32_t handle = call.Arg(1) != 0 && call.Arg(2) != 0 ? call.Arg(0) : 0;
+    const uint32_t count = std::min<uint32_t>(call.Arg(1), kMaxStreamInputs);
+    std::array<StreamInput, kMaxStreamInputs> inputs = {};
+    if (handle != 0)
+    {
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            const GuestAddress entry = call.Arg(2) + i * 12;
+            inputs[i].vertex_buffer = memory.Read32(entry);
+            inputs[i].stride = memory.Read32(entry + 4);
+            inputs[i].offset = memory.Read32(entry + 8);
+            if (inputs[i].vertex_buffer != 0)
+            {
+                AddResourceBinding(inputs[i].vertex_buffer);
+            }
+        }
+        TraceOnce(Format("vertex shader input %08X %u", handle, count),
+                  Format("SetVertexShaderInput: handle %08X, %u stream(s), stream 0 buffer %08X stride %u offset %u",
+                         handle, count, inputs[0].vertex_buffer, inputs[0].stride, inputs[0].offset));
+    }
+    for (const StreamInput& previous : g_pipeline.inputs)
+    {
+        if (previous.vertex_buffer != 0)
+        {
+            ReleaseResourceBinding(previous.vertex_buffer, DevicePushFence());
+        }
+    }
+    g_pipeline.input_shader = handle;
+    g_pipeline.inputs = inputs;
     call.Return(kD3dOk, 3);
 }
 
@@ -363,6 +469,11 @@ PipelineState& Pipeline()
     return g_pipeline;
 }
 
+std::array<float, 16> ScreenToClip(const std::array<float, 16>& screen)
+{
+    return MapViewport(screen, true);
+}
+
 void RegisterStateExports(runtime::HleRegistry& registry)
 {
     struct ComplexSetter
@@ -416,7 +527,9 @@ void RegisterStateExports(runtime::HleRegistry& registry)
     registry.AddExport("d3d8", "D3DDevice_SetTexture", &D3DDevice_SetTexture);
     registry.AddExport("d3d8", "D3DDevice_SetTransform", &D3DDevice_SetTransform);
     registry.AddExport("d3d8", "D3DDevice_GetProjectionViewportMatrix", &D3DDevice_GetProjectionViewportMatrix);
+    registry.AddExport("d3d8", "D3DDevice_SetModelView", &D3DDevice_SetModelView);
     registry.AddExport("d3d8", "D3DDevice_SetStreamSource", &D3DDevice_SetStreamSource);
+    registry.AddExport("d3d8", "D3DDevice_SetVertexShaderInput", &D3DDevice_SetVertexShaderInput);
     registry.AddExport("d3d8", "D3DDevice_SetIndices", &D3DDevice_SetIndices);
     registry.AddExport("d3d8", "D3DDevice_SetVertexShader", &D3DDevice_SetVertexShader);
     registry.AddExport("d3d8", "D3DDevice_SetPixelShader", &D3DDevice_SetPixelShader);

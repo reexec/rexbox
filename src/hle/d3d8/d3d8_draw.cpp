@@ -756,6 +756,7 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
         }
     }
     const ProgramShader* shader = nullptr;
+    const vsh::Declaration* declaration = nullptr;  // the program's, or SetVertexShaderInput's handle's
     VertexLayout layout;
     if (is_program)
     {
@@ -768,7 +769,21 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
             });
             return;
         }
-        if ((shader->declaration.streams & ~1u) != 0)
+        declaration = &shader->declaration;
+        if (pipeline.input_shader != 0)
+        {
+            const ProgramShader* inputs = FindProgramShader(pipeline.input_shader);
+            if (inputs == nullptr)
+            {
+                ReportOncePer("vertex shader input", pipeline.input_shader, [&] {
+                    return Format("%s: SetVertexShaderInput handle %08X is unknown, not drawn", name,
+                                  pipeline.input_shader);
+                });
+                return;
+            }
+            declaration = &inputs->declaration;
+        }
+        if ((declaration->streams & ~1u) != 0)
         {
             ReportOncePer("vertex program streams", pipeline.vertex_shader, [&] {
                 return Format("%s: vertex-shader program %08X reads streams other than 0, not drawn yet", name,
@@ -784,7 +799,7 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
         {
             layout.tex_components[i] = 4;
         }
-        layout.stride = shader->declaration.stream_bytes[0];
+        layout.stride = declaration->stream_bytes[0];
     }
     else if (!DecodeFvf(pipeline.vertex_shader, &layout))
     {
@@ -796,7 +811,7 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
     std::vector<uint8_t> immediate_bytes;
     if (source.immediate != nullptr)
     {
-        immediate_bytes = is_program ? PackDeclarationVertices(shader->declaration, layout.stride,
+        immediate_bytes = is_program ? PackDeclarationVertices(*declaration, layout.stride,
                                                                source.immediate->vertices())
                                      : PackFvfVertices(layout, source.immediate->vertices());
     }
@@ -988,7 +1003,7 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
     lap.Mark(profile::Phase::kUpload);
     if (is_program)
     {
-        SetProgramAttributes(shader->declaration, stride, vertex_program->used_inputs, vertex_offset);
+        SetProgramAttributes(*declaration, stride, vertex_program->used_inputs, vertex_offset);
     }
     else
     {
@@ -1027,9 +1042,13 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
         uniforms->Set4f(program->target, static_cast<float>(width), static_cast<float>(height),
                         pipeline.screen_space_offset_x, pipeline.screen_space_offset_y);
         uniforms->Set1f(program->wide, wide);
+        // SetModelView's matrices replace world x view and the projection.
         const std::array<float, 16> world_view =
-            Multiply(pipeline.transforms[ts::kWorld], pipeline.transforms[ts::kView]);
-        const std::array<float, 16> transform = Multiply(world_view, pipeline.transforms[ts::kProjection]);
+            pipeline.model_view_set ? pipeline.model_view
+                                    : Multiply(pipeline.transforms[ts::kWorld], pipeline.transforms[ts::kView]);
+        const std::array<float, 16> transform = pipeline.composite_set
+                                                    ? ScreenToClip(pipeline.composite)
+                                                    : Multiply(world_view, pipeline.transforms[ts::kProjection]);
         uniforms->SetMatrix4(program->transform, transform.data());
         uniforms->SetMatrix4(program->world_view, world_view.data());
         if (program->normal_matrix >= 0)
@@ -1095,6 +1114,17 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
 VertexSource StreamZero()
 {
     VertexSource source;
+    const PipelineState& pipeline = Pipeline();
+    if (pipeline.input_shader != 0)
+    {
+        // SetVertexShaderInput's stream 0 replaces SetStreamSource's.
+        const StreamInput& input = pipeline.inputs[0];
+        source.base =
+            input.vertex_buffer != 0 ? Memory().Read32(input.vertex_buffer + header::kData) + input.offset : 0;
+        source.stride = input.stride;
+        source.from_buffer = input.vertex_buffer != 0;
+        return source;
+    }
     const GuestAddress buffer = StreamVertexBuffer(0);
     source.base = buffer != 0 ? Memory().Read32(buffer + header::kData) : 0;
     source.stride = StreamStride(0);
