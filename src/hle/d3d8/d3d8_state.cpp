@@ -79,19 +79,21 @@ void D3DDevice_SetRenderState_Simple()
 // void D3DDevice_SetRenderStateNotInline(D3DRENDERSTATETYPE State, DWORD Value)
 // The original stores the slot and, for the states below the deferred block,
 // pushes the NV2A method from its own table; those states reach the GL
-// backend through the slot (d3d8_draw reads them).
+// backend through the slot (d3d8_draw reads them). State is the title's own
+// numbering (a slot), not a logical ID.
 void D3DDevice_SetRenderStateNotInline()
 {
     HleCall call;
+    const uint32_t slot = call.Arg(0);
     // Complex states go through their setters in the original; ZBias is the
     // only one whose setter writes more than its own slot.
-    if (call.Arg(0) == rs::kZBias)
+    if (LogicalFromSlot(CurrentRenderStateLayout(), slot) == rs::kZBias)
     {
         ApplyZBias(call.Arg(1));
     }
     else
     {
-        SetRenderStateValue(call.Arg(0), call.Arg(1));
+        SetRenderStateSlot(slot, call.Arg(1));
     }
     call.Return(kD3dOk, 2);
 }
@@ -287,6 +289,31 @@ void D3DDevice_SetStreamSource()
         SetStream(stream, buffer, call.Arg(2));
     }
     call.Return(kD3dOk, 3);
+}
+
+// void D3DDevice_SetPalette(DWORD Stage, D3DPalette* pPalette)
+// The palette P8 textures on that stage expand through; the binding is
+// counted like a texture's.
+void D3DDevice_SetPalette()
+{
+    HleCall call;
+    const uint32_t stage = call.Arg(0);
+    const GuestAddress palette = call.Arg(1);
+    if (stage < kMaxTextureStages)
+    {
+        if (palette != 0)
+        {
+            AddResourceBinding(palette);
+        }
+        const GuestAddress previous = g_pipeline.palettes[stage];
+        g_pipeline.palettes[stage] = palette;
+        if (previous != 0)
+        {
+            ReleaseResourceBinding(previous, DevicePushFence());
+        }
+        ++g_pipeline.texture_generation;
+    }
+    call.Return(kD3dOk, 2);
 }
 
 // void D3DDevice_SetVertexShaderInput(DWORD Handle, UINT StreamCount, const D3DSTREAM_INPUT* pStreamInputs)
@@ -530,6 +557,7 @@ void RegisterStateExports(runtime::HleRegistry& registry)
     registry.AddExport("d3d8", "D3DDevice_SetModelView", &D3DDevice_SetModelView);
     registry.AddExport("d3d8", "D3DDevice_SetStreamSource", &D3DDevice_SetStreamSource);
     registry.AddExport("d3d8", "D3DDevice_SetVertexShaderInput", &D3DDevice_SetVertexShaderInput);
+    registry.AddExport("d3d8", "D3DDevice_SetPalette", &D3DDevice_SetPalette);
     registry.AddExport("d3d8", "D3DDevice_SetIndices", &D3DDevice_SetIndices);
     registry.AddExport("d3d8", "D3DDevice_SetVertexShader", &D3DDevice_SetVertexShader);
     registry.AddExport("d3d8", "D3DDevice_SetPixelShader", &D3DDevice_SetPixelShader);

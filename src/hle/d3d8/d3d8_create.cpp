@@ -240,6 +240,37 @@ void CreateBuffer(HleCall& call, uint32_t type, ResourceKind kind, uint32_t leng
     call.Return(kD3dOk, stack_args);
 }
 
+// HRESULT D3DDevice_CreatePalette(D3DPALETTESIZE Size, D3DPalette** ppPalette)
+// A 12-byte resource as the XDK 4531 library makes it: Common carries the size
+// (bits 30..31) over refcount 1, the palette type and D3D-created; Data holds
+// 256 >> Size D3DCOLOR entries (docs/design/20261020-i007-render-state-4531-palette.md).
+void D3DDevice_CreatePalette()
+{
+    HleCall call;
+    const uint32_t size = call.Arg(0);
+    const GuestAddress out = call.Arg(1);
+    if (out == 0 || size > 3)
+    {
+        call.Return(kD3dErrInvalidCall, 2);
+        return;
+    }
+    const uint32_t entries = 256u >> size;
+    GuestAddress data = 0;
+    const GuestAddress palette = AllocateObject(kResourceHeaderSize, entries * 4, &data);
+    if (palette == 0)
+    {
+        call.Return(kErrOutOfMemory, 2);
+        return;
+    }
+    runtime::GuestMemory& memory = Memory();
+    memory.Write32(palette + header::kCommon,
+                   (size << header::kPaletteSizeShift) | header::kD3dCreated | header::kTypePalette | 1);
+    memory.Write32(palette + header::kData, data);
+    Track(palette, ResourceKind::kPalette, entries, 1, 0, entries * 4, entries * 4, 1);
+    memory.Write32(out, palette);
+    call.Return(kD3dOk, 2);
+}
+
 // HRESULT D3DDevice_CreateVertexBuffer(UINT Length, DWORD Usage, DWORD FVF, D3DPOOL Pool, D3DVertexBuffer** ppVertexBuffer)
 void D3DDevice_CreateVertexBuffer()
 {
@@ -524,6 +555,7 @@ void RegisterCreateExports(runtime::HleRegistry& registry)
     registry.AddExport("d3d8", "D3DDevice_CreateImageSurface", &D3DDevice_CreateImageSurface);
     registry.AddExport("d3d8", "D3DDevice_CreateVertexBuffer", &D3DDevice_CreateVertexBuffer);
     registry.AddExport("d3d8", "D3DDevice_CreateIndexBuffer", &D3DDevice_CreateIndexBuffer);
+    registry.AddExport("d3d8", "D3DDevice_CreatePalette", &D3DDevice_CreatePalette);
     registry.AddExport("d3d8", "D3DResource_Register", &D3DResource_Register);
     registry.AddExport("d3d8", "D3DTexture_GetSurfaceLevel", &D3DTexture_GetSurfaceLevel);
     registry.AddExport("d3d8", "D3DTexture_GetLevelDesc", &D3DTexture_GetLevelDesc);

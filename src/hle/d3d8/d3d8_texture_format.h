@@ -83,6 +83,11 @@ uint32_t LevelBytes(uint32_t format, uint32_t width, uint32_t height, uint32_t d
 bool DecodeTextureLevel(uint32_t format, const uint8_t* source, uint32_t width, uint32_t height, uint32_t depth,
                         uint32_t pitch, std::vector<uint8_t>* rgba);
 
+// A P8 level (swizzled 8-bit indices) through `palette`, `entries` D3DCOLOR
+// values (A8R8G8B8), into RGBA8; an index past the palette reads 0.
+void DecodePalettedLevel(const uint8_t* source, uint32_t width, uint32_t height, uint32_t depth,
+                         const uint32_t* palette, uint32_t entries, std::vector<uint8_t>* rgba);
+
 // One 4x4 DXT block (8 bytes for DXT1, 16 for DXT3/DXT5) into 16 RGBA8 texels.
 void DecodeDxtBlock(uint32_t format, const uint8_t* block, uint8_t rgba[64]);
 

@@ -112,6 +112,17 @@ Render states live in the library global `D3D__RenderState[number]`, texture-sta
 
 텍스처 스테이지 칸은 다음과 같다. 대부분 추정이고, 28 `TEXCOORDINDEX`·29 `BORDERCOLOR`·30 `COLORKEYCOLOR`·22–27 bump env는 확인됨이다. / Texture-stage slots (mostly inferred; 28 `TEXCOORDINDEX`, 29 `BORDERCOLOR`, 30 `COLORKEYCOLOR` and 22–27 bump env confirmed): 0 `ADDRESSU`, 1 `ADDRESSV`, 2 `ADDRESSW`, 3 `MAGFILTER`, 4 `MINFILTER`, 5 `MIPFILTER`, 6 `MIPMAPLODBIAS`, 7 `MAXMIPLEVEL`, 8 `MAXANISOTROPY`, 9 `COLORKEYOP`, 10 `COLORSIGN`, 11 `ALPHAKILL`, 12 `COLOROP`, 13–15 `COLORARG0..2`, 16 `ALPHAOP`, 17–19 `ALPHAARG0..2`, 20 `RESULTARG`, 21 `TEXTURETRANSFORMFLAGS`, 22–27 `BUMPENVMAT00/01/11/10`, `BUMPENVLSCALE`, `BUMPENVLOFFSET`.
 
+### XDK 4531 배치 / The XDK 4531 layout
+
+* XDK 4531(Crazy Taxi 3)은 단순 블록 끝 **슬롯 82**에 상태 하나를 더한다(기본값 1, `D3DRS_DEPTHCLIPCONTROL`로 **추정**). 그래서 deferred 블록은 83..117, complex 블록은 118..146이고 상태는 147개다. 57..81과 텍스처 스테이지 번호는 4134와 같다(**확인됨**: 식별된 `D3DRS_*` 변수와 4531 기본 상태 루틴의 기본값 표, reCT3 `docs/analysis/ct3-xbe-overview.md` §4).
+* rexbox는 `rs::k*`를 4134 번호의 논리 ID로 두고, 바인딩된 `D3D_g_DeferredRenderState`/`D3D_g_ComplexRenderState`에서 타이틀의 슬롯을 유도한다. 타이틀이 넘기는 `D3DRENDERSTATETYPE`은 슬롯으로 다룬다([설계 i007-render-state-4531-palette](../design/20261020-i007-render-state-4531-palette.md)).
+* XDK 4531 (Crazy Taxi 3) adds one state at **slot 82**, the end of the simple block (default 1, **inferred** to be `D3DRS_DEPTHCLIPCONTROL`), so the deferred block is 83..117, the complex block 118..146, 147 states; 57..81 and the texture-stage numbers equal 4134's (**confirmed** from the identified `D3DRS_*` variables and the default table of 4531's default-state routine, reCT3 `docs/analysis/ct3-xbe-overview.md` §4). rexbox keeps `rs::k*` as logical IDs in 4134 numbers and derives the title's slots from the bound `D3D_g_DeferredRenderState`/`D3D_g_ComplexRenderState`; a `D3DRENDERSTATETYPE` from the title is handled as a slot ([design i007-render-state-4531-palette](../design/20261020-i007-render-state-4531-palette.md)).
+
+### 팔레트 / Palettes
+
+* `D3DPalette`는 12바이트 리소스다. `Common = (Size << 30) | 0x01030001`(`D3DPALETTESIZE` 0..3 = 항목 256..32, 참조 1, 타입 `0x00030000`, D3D 생성), `Data`는 D3DCOLOR 항목의 물리 주소다(**확인됨**, XDK 4531 `CreatePalette`). `SetPalette(Stage, pPalette)`는 NV2A `0x1B20 + Stage×64`(SET_TEXTURE_PALETTE)에 `Data | 크기 비트`를 보낸다. P8(포맷 0x0B) 텍스처는 그 스테이지의 팔레트로 색을 얻는다.
+* A `D3DPalette` is a 12-byte resource: `Common = (Size << 30) | 0x01030001` (`D3DPALETTESIZE` 0..3 = 256..32 entries, reference 1, type `0x00030000`, D3D-created) and `Data` the physical address of its D3DCOLOR entries (**confirmed**, XDK 4531 `CreatePalette`); `SetPalette(Stage, pPalette)` sends `Data | the size bits` to NV2A `0x1B20 + Stage×64` (SET_TEXTURE_PALETTE); P8 (format 0x0B) textures take their colors from their stage's palette.
+
 ## 8. 텍스처 포맷 / Texture formats
 
 NV2A 색 포맷이다(추정, xboxrecomp `d3d8_xbox.h`(MIT)의 원래 Xbox 항목과 일치). 게임이 지금 쓰는 것은 DXT1 0x0C뿐이다. / NV2A color formats (inferred, matching the original-Xbox entries of xboxrecomp `d3d8_xbox.h` (MIT); the title uses only DXT1 0x0C so far):

@@ -40,6 +40,7 @@ constexpr uint32_t kD3dOk = 0x00000000;
 constexpr uint32_t kD3dErrNotAvailable = 0x8876086A;
 constexpr uint32_t kD3dErrInvalidDevice = 0x8876086B;
 constexpr uint32_t kD3dErrInvalidCall = 0x8876086C;
+constexpr uint32_t kErrOutOfMemory = 0x8007000E;  // E_OUTOFMEMORY
 
 constexpr uint32_t kDevTypeHal = 1;
 

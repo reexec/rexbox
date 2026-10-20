@@ -241,7 +241,7 @@ FixedFunctionKey BuildKey(const VertexLayout& layout, BoundTexture textures[kFix
                 ReportOncePer("op", op, [op] { return Format("texture operation %u is drawn as SELECTARG1", op); });
             }
         }
-        textures[s] = ResolveTexture(pipeline.textures[s]);
+        textures[s] = ResolveTexture(pipeline.textures[s], pipeline.palettes[s]);
         stage.sampler = textures[s].kind;
         stage.unnormalized = textures[s].unnormalized;
     }
@@ -854,7 +854,7 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
             }
             if (is_program)
             {
-                textures[s] = ResolveTexture(pipeline.textures[s]);
+                textures[s] = ResolveTexture(pipeline.textures[s], pipeline.palettes[s]);
             }
             pixel_key.samplers[s] = textures[s].kind;
             if (s + 1 < kFixedFunctionStages)

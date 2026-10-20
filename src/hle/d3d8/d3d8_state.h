@@ -74,6 +74,7 @@ struct StreamInput
 struct PipelineState
 {
     std::array<runtime::GuestAddress, kMaxTextureStages> textures = {};  // bound texture headers
+    std::array<runtime::GuestAddress, kMaxTextureStages> palettes = {};  // SetPalette, for P8 textures
     std::array<std::array<float, 16>, kMaxTransforms> transforms = {};
     runtime::GuestAddress index_buffer = 0;
     uint32_t base_vertex_index = 0;

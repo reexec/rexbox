@@ -43,6 +43,10 @@ struct CachedTexture
     uint32_t size_field = 0;
     uint32_t data = 0;
     uint32_t hash = 0;
+    GuestAddress palette = 0;      // P8: the stage's palette at the upload
+    uint32_t palette_data = 0;     // its Data and Common, and a hash of its entries
+    uint32_t palette_common = 0;
+    uint32_t palette_hash = 0;
     uint32_t checked_frame = 0xFFFFFFFF;
     bool written = false;
     uint64_t gl_bytes = 0;  // RGBA8 levels uploaded (for the settings menu)
@@ -131,7 +135,28 @@ bool Upload(GuestAddress header, CachedTexture* cached)
     const bool cube = (format_field & header::kFormatCubeMap) != 0;
     const uint32_t dimension = (format_field >> header::kFormatDimensionShift) & 0xF;
     TextureFormatInfo info;
-    if (!DescribeTextureFormat(format, &info) || info.palette)
+    const bool paletted = DescribeTextureFormat(format, &info) && info.palette;
+    std::vector<uint32_t> palette;
+    if (paletted && cached->palette != 0)
+    {
+        const uint32_t entries = 256u >> (cached->palette_common >> header::kPaletteSizeShift);
+        const GuestAddress entries_address = cached->palette_data & kPhysicalMask;
+        if (memory.IsValid(entries_address, entries * 4))
+        {
+            palette.resize(entries);
+            for (uint32_t i = 0; i < entries; ++i)
+            {
+                palette[i] = memory.Read32(entries_address + i * 4);
+            }
+        }
+    }
+    if (paletted && palette.empty())
+    {
+        ReportOnce(Format("texpal %08X", header),
+                   Format("P8 texture %08X has no palette on its stage; sampled as white", header));
+        return false;
+    }
+    if (!paletted && !DescribeTextureFormat(format, &info))
     {
         ReportOnce(Format("texfmt %02X", format), Format("texture format %02X is not decoded yet (header %08X); "
                                                           "sampled as white",
@@ -202,8 +227,13 @@ bool Upload(GuestAddress header, CachedTexture* cached)
         // Compressed levels smaller than a block decode from the padded block.
         const uint32_t decode_width = info.layout == PixelLayout::kCompressed ? std::max(width, 4u) : width;
         const uint32_t decode_height = info.layout == PixelLayout::kCompressed ? std::max(height, 4u) : height;
-        if (!DecodeTextureLevel(format, memory.Translate(address), decode_width, decode_height, depth,
-                                linear ? layout.pitch : 0, &rgba))
+        if (paletted)
+        {
+            DecodePalettedLevel(memory.Translate(address), width, height, depth, palette.data(),
+                                static_cast<uint32_t>(palette.size()), &rgba);
+        }
+        else if (!DecodeTextureLevel(format, memory.Translate(address), decode_width, decode_height, depth,
+                                     linear ? layout.pitch : 0, &rgba))
         {
             break;
         }
@@ -271,7 +301,7 @@ GLint AddressMode(uint32_t value)
 
 }  // namespace
 
-BoundTexture ResolveTexture(GuestAddress header)
+BoundTexture ResolveTexture(GuestAddress header, GuestAddress palette)
 {
     if (header == 0)
     {
@@ -300,13 +330,25 @@ BoundTexture ResolveTexture(GuestAddress header)
     CachedTexture& cached = g_textures[header];
     bool upload = cached.bound.texture == 0 || cached.written || format_field != cached.format_field ||
                   size_field != cached.size_field || data != cached.data;
+    // A P8 texture also depends on its stage's palette.
+    const bool paletted = ((format_field >> header::kFormatFormatShift) & 0xFF) == fmt::kP8;
+    const uint32_t palette_data = paletted && palette != 0 ? memory.Read32(palette + header::kData) : 0;
+    const uint32_t palette_common = paletted && palette != 0 ? memory.Read32(palette + header::kCommon) : 0;
+    const uint32_t palette_bytes = (256u >> (palette_common >> header::kPaletteSizeShift)) * 4;
+    if (paletted)
+    {
+        upload = upload || palette != cached.palette || palette_data != cached.palette_data ||
+                 palette_common != cached.palette_common;
+    }
     // Writes without a lock: compare a sampled hash once per frame.
     const uint32_t frame = State().frame_count;
     const LevelLayout layout0 = HeaderLevelLayout(header, 0);
     if (!upload && cached.checked_frame != frame)
     {
         cached.checked_frame = frame;
-        upload = SampleHash(data & kPhysicalMask, layout0.size) != cached.hash;
+        upload = SampleHash(data & kPhysicalMask, layout0.size) != cached.hash ||
+                 (paletted && palette != 0 &&
+                  SampleHash(palette_data & kPhysicalMask, palette_bytes) != cached.palette_hash);
     }
     if (upload)
     {
@@ -316,6 +358,10 @@ BoundTexture ResolveTexture(GuestAddress header)
         cached.written = false;
         cached.checked_frame = frame;
         cached.hash = SampleHash(data & kPhysicalMask, layout0.size);
+        cached.palette = paletted ? palette : 0;
+        cached.palette_data = palette_data;
+        cached.palette_common = palette_common;
+        cached.palette_hash = paletted && palette != 0 ? SampleHash(palette_data & kPhysicalMask, palette_bytes) : 0;
         if (!Upload(header, &cached))
         {
             cached.bound.kind = SamplerKind::kNone;

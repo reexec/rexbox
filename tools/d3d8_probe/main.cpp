@@ -13,6 +13,7 @@
 #include "d3d8_gamma.h"
 #include "d3d8_immediate.h"
 #include "d3d8_psh.h"
+#include "d3d8_render_state.h"
 #include "d3d8_texture_format.h"
 #include "d3d8_vsh.h"
 
@@ -757,6 +758,52 @@ void CheckPixelShaders()
     Expect(matched, "fixed-function vertex shader writes every combiner input");
 }
 
+// The render-state layout from the block variables (design i007 4531):
+// 4134 when they are missing, XDK 4531's added slot 82 otherwise.
+void CheckRenderStateLayout()
+{
+    const RenderStateLayout none = DeriveRenderStateLayout(0x00102160, 0, 0);
+    ExpectEqual(none.deferred_first, 82, "layout without block variables: deferred at 82");
+    ExpectEqual(SlotFromLogical(none, rs::kZBias), rs::kZBias, "4134 layout: ZBias keeps its number");
+
+    // Crazy Taxi 3 (XDK 4531): D3D_g_RenderState 0x00102160, deferred 0x001022AC, complex 0x00102338.
+    const RenderStateLayout xdk4531 = DeriveRenderStateLayout(0x00102160, 0x001022AC, 0x00102338);
+    ExpectEqual(xdk4531.deferred_first, 83, "4531 layout: deferred block at 83");
+    ExpectEqual(xdk4531.complex_first, 118, "4531 layout: complex block at 118");
+    ExpectEqual(RenderStateSlotCount(xdk4531), 147, "4531 layout: 147 slots");
+    ExpectEqual(SlotFromLogical(xdk4531, rs::kColorWriteEnable), 67, "4531: simple states keep their slots");
+    ExpectEqual(SlotFromLogical(xdk4531, rs::kFogEnable), 83, "4531: FogEnable at 83");
+    ExpectEqual(SlotFromLogical(xdk4531, rs::kSwapFilter), 117, "4531: SwapFilter at 117");
+    ExpectEqual(SlotFromLogical(xdk4531, rs::kFillMode), 121, "4531: FillMode at 121 (D3DRS_FillMode)");
+    ExpectEqual(SlotFromLogical(xdk4531, rs::kZBias), 131, "4531: ZBias at 131 (D3DRS_ZBias)");
+    ExpectEqual(SlotFromLogical(xdk4531, rs::kDoNotCullUncompressed), 146, "4531: the last state at 146");
+    ExpectEqual(LogicalFromSlot(xdk4531, 82), kNoRenderState, "4531: slot 82 has no 4134 state");
+    ExpectEqual(LogicalFromSlot(xdk4531, 131), rs::kZBias, "4531: slot 131 is ZBias");
+    ExpectEqual(LogicalFromSlot(xdk4531, 147), kNoRenderState, "4531: past the end");
+    bool round_trip = true;
+    for (uint32_t logical = 0; logical < kLogicalStateCount; ++logical)
+    {
+        round_trip = round_trip && LogicalFromSlot(xdk4531, SlotFromLogical(xdk4531, logical)) == logical;
+    }
+    Expect(round_trip, "4531: every logical state survives slot and back");
+
+    const RenderStateLayout odd = DeriveRenderStateLayout(0x00102160, 0x001022AC, 0x00102340);
+    ExpectEqual(odd.deferred_first, 82, "a deferred block of the wrong size falls back to 4134");
+}
+
+// P8 through a palette (D3DCOLOR entries, A8R8G8B8), swizzled indices.
+void CheckPaletted()
+{
+    const uint32_t palette[2] = {0x80112233, 0xFF445566};
+    // 2x2 swizzled: (0,0) (1,0) (0,1) (1,1) in memory order.
+    const uint8_t indices[4] = {0, 1, 1, 5};
+    std::vector<uint8_t> rgba;
+    DecodePalettedLevel(indices, 2, 2, 1, palette, 2, &rgba);
+    ExpectTexel(rgba.data(), 0x11, 0x22, 0x33, 0x80, "P8 index 0 through the palette");
+    ExpectTexel(rgba.data() + 4, 0x44, 0x55, 0x66, 0xFF, "P8 index 1 through the palette");
+    ExpectTexel(rgba.data() + 12, 0, 0, 0, 0, "P8 index past the palette reads 0");
+}
+
 }  // namespace
 
 int main()
@@ -772,6 +819,8 @@ int main()
     CheckLighting();
     CheckVertexPrograms();
     CheckPixelShaders();
+    CheckRenderStateLayout();
+    CheckPaletted();
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

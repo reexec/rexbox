@@ -37,13 +37,9 @@ constexpr uint32_t kDirtyFlagsOffset = 0x1F0;
 constexpr uint32_t kTextureStages = 4;
 constexpr uint32_t kTextureStateSlots = 32;
 
-// D3D_g_RenderState: DWORDs by Xbox D3DRENDERSTATETYPE; the deferred block
-// starts at 82 and the complex block at 117 (D3D_g_DeferredRenderState and
-// D3D_g_ComplexRenderState); D3DRS_DoNotCullUncompressed (145) is the last
-// named state.
-constexpr uint32_t kRenderStateCount = 146;
-constexpr uint32_t kDeferredRenderStateFirst = 82;
-constexpr uint32_t kComplexRenderStateFirst = 117;
+// D3D_g_RenderState: DWORDs by the title's D3DRENDERSTATETYPE; where its
+// deferred and complex blocks start comes from D3D_g_DeferredRenderState and
+// D3D_g_ComplexRenderState (RenderStateLayout, d3d8_render_state.h).
 
 // Dirty bits the setters OR into the flags (the library consumes them in
 // its draw path; mirrored so the game's own reads of the word stay as on
@@ -65,8 +61,15 @@ bool LibraryGlobalsAvailable();
 GuestAddress DeviceObject();  // *D3D_g_pDevice
 void SetDeviceObject(GuestAddress device);
 
+// By logical ID (rs::k*, XDK 4134 numbers), mapped to the title's slot.
 uint32_t RenderStateValue(uint32_t state);
 void SetRenderStateValue(uint32_t state, uint32_t value);
+// By the title's own D3DRENDERSTATETYPE (a slot), as a title or its library
+// passes it.
+uint32_t RenderStateSlotValue(uint32_t slot);
+void SetRenderStateSlot(uint32_t slot, uint32_t value);
+struct RenderStateLayout;
+const RenderStateLayout& CurrentRenderStateLayout();
 
 uint32_t TextureStateValue(uint32_t stage, uint32_t slot);
 void SetTextureStateValue(uint32_t stage, uint32_t slot, uint32_t value);
