@@ -14,6 +14,7 @@
 #include "d3d8_capture.h"
 #include "d3d8_draw_watch.h"
 #include "d3d8_ff_shader.h"
+#include "d3d8_fog_blend.h"
 #include "d3d8_fvf.h"
 #include "d3d8_gl.h"
 #include "d3d8_gl_buffers.h"
@@ -306,9 +307,38 @@ FixedFunctionKey BuildKey(const VertexLayout& layout, BoundTexture textures[kFix
             });
         }
     }
-    if (RenderStateValue(rs::kFogEnable) != 0)
+    // Fog: the mode per pixel; the coordinate's source for fixed-function
+    // vertex processing (a vertex program writes oFog itself).
+    const FogSettings fog = FogFromStates(RenderStateValue(rs::kFogEnable), RenderStateValue(rs::kFogTableMode),
+                                          RenderStateValue(rs::kRangeFogEnable));
+    key.fog_mode = fog.mode;
+    key.fog_source = program ? static_cast<uint8_t>(fogsource::kSpecular) : fog.source;
+    // Vertex blending over SetVertexBlendModelView's model views.
+    uint32_t matrices = 0;
+    uint32_t weights = 0;
+    if (!program && !layout.pretransformed && pipeline.blend_count > 1 &&
+        SkinMatrices(RenderStateValue(rs::kVertexBlend), &matrices, &weights))
     {
-        ReportOncePer("fog", 0, [] { return std::string("fog is not drawn yet"); });
+        const bool implicit = weights < matrices;
+        matrices = std::min(matrices, pipeline.blend_count);
+        weights = std::min(implicit ? matrices - 1 : matrices, layout.blend_weights);
+        if (layout.blend_weights == 0)
+        {
+            ReportOncePer("blend weights", RenderStateValue(rs::kVertexBlend), [] {
+                return std::string("vertex blending without blend weights in the vertex; the first model view is used");
+            });
+        }
+        else
+        {
+            key.blend_matrices = static_cast<uint8_t>(matrices);
+            key.blend_weights = static_cast<uint8_t>(weights);
+        }
+    }
+    else if (!program && RenderStateValue(rs::kVertexBlend) != 0 && pipeline.blend_count <= 1)
+    {
+        ReportOncePer("world blend", RenderStateValue(rs::kVertexBlend), [] {
+            return std::string("vertex blending with world matrices (D3DTS_WORLD1..3) is not drawn yet");
+        });
     }
     return key;
 }
@@ -558,6 +588,13 @@ void SetVertexAttributes(const VertexLayout& layout, uint32_t stride, size_t bas
               kGlFloat, false);
     attribute(attr::kDiffuse, layout.diffuse, 4, kGlUnsignedByte, true);
     attribute(attr::kSpecular, layout.specular, 4, kGlUnsignedByte, true);
+    if (layout.blend_weights != 0 && layout.blend_offset != kAbsent)
+    {
+        const bool bytes = layout.blend_kind == vsh::ElementKind::kNormByte;
+        const bool shorts = layout.blend_kind == vsh::ElementKind::kNormShort;
+        attribute(attr::kBlendWeight, layout.blend_offset, static_cast<GLint>(layout.blend_weights),
+                  bytes ? kGlUnsignedByte : shorts ? kGlShort : kGlFloat, bytes || shorts);
+    }
     if (layout.normal_packed)
     {
         attribute(attr::kNormal, layout.normal, 2, kGlUnsignedShort, false);  // unpacked in the shader
@@ -901,6 +938,9 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
         {
             pixel_key.alpha_func = RenderStateValue(rs::kAlphaFunc);
         }
+        pixel_key.fog_mode = FogFromStates(RenderStateValue(rs::kFogEnable), RenderStateValue(rs::kFogTableMode),
+                                           RenderStateValue(rs::kRangeFogEnable))
+                                 .mode;
     }
     else
     {
@@ -1076,9 +1116,20 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
         const std::array<float, 16> world_view =
             pipeline.model_view_set ? pipeline.model_view
                                     : Multiply(pipeline.transforms[ts::kWorld], pipeline.transforms[ts::kView]);
-        const std::array<float, 16> transform = pipeline.composite_set
-                                                    ? ScreenToClip(pipeline.composite)
-                                                    : Multiply(world_view, pipeline.transforms[ts::kProjection]);
+        // With vertex blending the shader forms eye space itself; the
+        // transform is then the projection-viewport matrix back to clip space.
+        const std::array<float, 16> transform =
+            key.blend_matrices != 0 ? ScreenToClip(pipeline.projection_viewport)
+            : pipeline.composite_set ? ScreenToClip(pipeline.composite)
+                                     : Multiply(world_view, pipeline.transforms[ts::kProjection]);
+        for (uint32_t i = 0; i < key.blend_matrices; ++i)
+        {
+            uniforms->SetMatrix4(program->blend_model_view[i], pipeline.blend_model_views[i].data());
+            if (program->blend_normal[i] >= 0)
+            {
+                uniforms->SetMatrix4(program->blend_normal[i], NormalMatrix(pipeline.blend_model_views[i]).data());
+            }
+        }
         uniforms->SetMatrix4(program->transform, transform.data());
         uniforms->SetMatrix4(program->world_view, world_view.data());
         if (program->normal_matrix >= 0)
@@ -1100,6 +1151,17 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
         tex_scale = program->tex_scale;
         tfactor_location = program->tfactor;
         alpha_ref_location = program->alpha_ref;
+    }
+    // Fog colour and parameters (start, end, density) for the fragment stage.
+    const int fog_color_location = is_program ? vertex_program->fog_color : program->fog_color;
+    const int fog_params_location = is_program ? vertex_program->fog_params : program->fog_params;
+    if (fog_color_location >= 0 || fog_params_location >= 0)
+    {
+        float fog_color[4];
+        ColorToFloats(RenderStateValue(rs::kFogColor), fog_color);
+        uniforms->Set4fv(fog_color_location, 1, fog_color);
+        uniforms->Set4f(fog_params_location, FloatBits(RenderStateValue(rs::kFogStart)),
+                        FloatBits(RenderStateValue(rs::kFogEnd)), FloatBits(RenderStateValue(rs::kFogDensity)), 0.0f);
     }
     float tfactor[4];
     ColorToFloats(RenderStateValue(rs::kTextureFactor), tfactor);

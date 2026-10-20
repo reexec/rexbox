@@ -266,6 +266,7 @@ void D3DDevice_SetModelView()
     const GuestAddress composite = call.Arg(2);
     g_pipeline.model_view_set = model_view != 0;
     g_pipeline.composite_set = model_view != 0 && composite != 0;
+    g_pipeline.blend_count = 0;  // one model view: no blending
     if (g_pipeline.model_view_set)
     {
         std::memcpy(g_pipeline.model_view.data(), memory.Translate(model_view), 64);
@@ -293,8 +294,9 @@ void D3DDevice_SetModelView()
 //     const D3DMATRIX* pInverseModelViews, const D3DMATRIX* pProjectionViewport)
 // (stdcall, 16 bytes.) SetModelView for vertex blending: Count model views and
 // the projection-viewport matrix (what GetProjectionViewportMatrix returns);
-// Count 0 returns to world x view and the projection. Blending between the
-// matrices is not modelled: the first model view transforms every vertex.
+// Count 0 returns to world x view and the projection. All the model views are
+// kept for D3DRS_VERTEXBLEND (docs/design/20261020-i007-fog-vertex-blend.md);
+// without blending the first one transforms every vertex.
 void D3DDevice_SetVertexBlendModelView()
 {
     HleCall call;
@@ -306,19 +308,18 @@ void D3DDevice_SetVertexBlendModelView()
     {
         g_pipeline.model_view_set = false;
         g_pipeline.composite_set = false;
+        g_pipeline.blend_count = 0;
         call.Return(kD3dOk, 4);
         return;
     }
-    if (count > 1)
+    g_pipeline.blend_count = std::min<uint32_t>(count, 4);
+    for (uint32_t i = 0; i < g_pipeline.blend_count; ++i)
     {
-        TraceOnce("vertex blend model views",
-                  Format("SetVertexBlendModelView: %u model views; blending is not modelled, the first is used",
-                         count));
+        std::memcpy(g_pipeline.blend_model_views[i].data(), memory.Translate(model_views + i * 64), 64);
     }
-    std::memcpy(g_pipeline.model_view.data(), memory.Translate(model_views), 64);
-    std::array<float, 16> projection = {};
-    std::memcpy(projection.data(), memory.Translate(projection_viewport), 64);
-    g_pipeline.composite = MultiplyMatrices(g_pipeline.model_view, projection);
+    std::memcpy(g_pipeline.projection_viewport.data(), memory.Translate(projection_viewport), 64);
+    g_pipeline.model_view = g_pipeline.blend_model_views[0];
+    g_pipeline.composite = MultiplyMatrices(g_pipeline.model_view, g_pipeline.projection_viewport);
     g_pipeline.model_view_set = true;
     g_pipeline.composite_set = true;
     call.Return(kD3dOk, 4);

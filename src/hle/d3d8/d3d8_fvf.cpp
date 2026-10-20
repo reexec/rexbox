@@ -29,6 +29,7 @@ bool DecodeFvf(uint32_t code, VertexLayout* layout)
     {
         result.position_components = 3;
         result.blend_weights = (position - fvf::kXyzRhw) / 2;
+        result.blend_offset = 12;
         offset = 12 + 4 * result.blend_weights;
     }
     else
@@ -76,6 +77,7 @@ bool LayoutFromDeclaration(const vsh::Declaration& declaration, VertexLayout* la
 {
     // D3DVSDE_* register numbers.
     constexpr uint8_t kPositionRegister = 0;
+    constexpr uint8_t kBlendWeightRegister = 1;
     constexpr uint8_t kNormalRegister = 2;
     constexpr uint8_t kDiffuseRegister = 3;
     constexpr uint8_t kSpecularRegister = 4;
@@ -102,6 +104,19 @@ bool LayoutFromDeclaration(const vsh::Declaration& declaration, VertexLayout* la
             layout->position = element.offset;
             layout->position_components = 3;
             position = true;
+        }
+        else if (element.reg == kBlendWeightRegister)
+        {
+            // XDK 4531 titles store weights as PBYTE (Crazy Taxi 3: 0x44).
+            if (!is_float && element.kind != vsh::ElementKind::kNormByte &&
+                element.kind != vsh::ElementKind::kNormShort)
+            {
+                *error = "blend weight type " + std::to_string(element.type) + " is not float, PBYTE or NORMSHORT";
+                return false;
+            }
+            layout->blend_offset = element.offset;
+            layout->blend_weights = element.components;
+            layout->blend_kind = element.kind;
         }
         else if (element.reg == kNormalRegister)
         {

@@ -128,6 +128,15 @@ struct FixedFunctionKey
     uint8_t tex_coords = 0;
     uint8_t tex_components[4] = {};
     bool packed_normal = false;  // the normal arrives as a NORMPACKED3 DWORD (two unsigned shorts)
+    // Fog (fogmode::*, fogsource::*; d3d8_fog_blend.h): the vertex stage
+    // writes v_fog, the fragment stage blends towards u_fog_color.
+    uint8_t fog_mode = 0;
+    uint8_t fog_source = 0;
+    // Vertex blending: 2..4 model views (0 off) over a_blend's first
+    // `blend_weights` components; fewer weights than matrices means the last
+    // weight is 1 minus the others.
+    uint8_t blend_matrices = 0;
+    uint8_t blend_weights = 0;
 
     struct Stage
     {
@@ -192,6 +201,7 @@ constexpr uint32_t kDiffuse = 1;
 constexpr uint32_t kSpecular = 2;
 constexpr uint32_t kTexCoord0 = 3;  // .. kTexCoord0 + 3
 constexpr uint32_t kNormal = 7;
+constexpr uint32_t kBlendWeight = 8;
 }  // namespace attr
 
 // GLSL sources for `key`. `gles` selects "#version 300 es" over "330 core".

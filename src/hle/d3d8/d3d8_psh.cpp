@@ -1,5 +1,7 @@
 #include "d3d8_psh.h"
 
+#include "d3d8_fog_blend.h"
+
 #include <cstdio>
 
 namespace rexbox::hle::d3d8::psh
@@ -297,6 +299,10 @@ std::string Key::Serialize() const
                   unnormalized[2] ? 1 : 0, unnormalized[3] ? 1 : 0, bump_source_argb[0] ? 1 : 0,
                   bump_source_argb[1] ? 1 : 0, bump_source_argb[2] ? 1 : 0, bump_source_argb[3] ? 1 : 0,
                   alpha_func);
+    if (fog_mode != 0)
+    {
+        return text + buffer + "|f" + std::to_string(fog_mode);
+    }
     return text + buffer;
 }
 
@@ -312,7 +318,7 @@ uint64_t Key::Hash() const
         hash = HashMix(hash, static_cast<uint64_t>(samplers[s]) | (unnormalized[s] ? 0x100u : 0u) |
                                  (bump_source_argb[s] ? 0x200u : 0u));
     }
-    return HashMix(hash, alpha_func);
+    return HashMix(hash, alpha_func | (static_cast<uint64_t>(fog_mode) << 32));
 }
 
 uint32_t TextureMode(const Definition& definition, uint32_t stage)
@@ -325,6 +331,10 @@ std::string GenerateFragmentShader(const Key& key, bool gles, std::string* unsup
     unsupported->clear();
     const Definition& def = key.definition;
     std::string text = gles ? "#version 300 es\nprecision highp float;\nprecision highp int;\n" : "#version 330 core\n";
+    if (key.fog_mode != fogmode::kOff)
+    {
+        text += "in float v_fog;\n" + FogFunctionGlsl(key.fog_mode);
+    }
     text += "in vec4 v_diffuse;\n"
             "in vec4 v_specular;\n"
             "in vec4 v_tex0;\n"
@@ -362,8 +372,11 @@ std::string GenerateFragmentShader(const Key& key, bool gles, std::string* unsup
             "void main()\n{\n"
             "    vec4 v0 = v_diffuse;\n"
             "    vec4 v1 = v_specular;\n"
-            // Fog is not computed yet: a factor of 1 keeps the object's colour.
-            "    vec4 fog = vec4(u_fog_color.rgb, 1.0);\n";
+            "";
+    // The FOG register: the fog colour, its alpha the factor (1, the object's
+    // own colour, while fog is off).
+    text += key.fog_mode != fogmode::kOff ? "    vec4 fog = vec4(u_fog_color.rgb, rexbox_fog(v_fog));\n"
+                                          : "    vec4 fog = vec4(u_fog_color.rgb, 1.0);\n";
 
     // Texture stages.
     for (uint32_t s = 0; s < 4; ++s)

@@ -99,7 +99,23 @@ std::vector<uint8_t> PackFvfVertices(const VertexLayout& layout, const std::vect
         PutFloats(out + layout.position, vertex.reg[vsde::kPosition], layout.position_components);
         if (layout.blend_weights != 0)
         {
-            PutFloats(out + 4 * layout.position_components, vertex.reg[vsde::kBlendWeight], layout.blend_weights);
+            uint8_t* at = out + (layout.blend_offset != kAbsent ? layout.blend_offset : 4 * layout.position_components);
+            const float* value = vertex.reg[vsde::kBlendWeight];
+            for (uint32_t i = 0; i < layout.blend_weights; ++i)
+            {
+                switch (layout.blend_kind)
+                {
+                case vsh::ElementKind::kNormByte:
+                    at[i] = UnitByte(value[i]);
+                    break;
+                case vsh::ElementKind::kNormShort:
+                    PutShort(at + 2 * i, value[i] * 32767.0f);
+                    break;
+                default:
+                    PutFloats(at + 4 * i, value + i, 1);
+                    break;
+                }
+            }
         }
         if (layout.normal != kAbsent && layout.normal_packed)
         {

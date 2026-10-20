@@ -67,6 +67,7 @@ struct Key
     // and red (X8L8V8U8); otherwise U, V, L are red, green, blue (Q8W8V8U8).
     bool bump_source_argb[4] = {};
     uint32_t alpha_func = 0;  // 0: alpha test off; else 0x200 NEVER .. 0x207 ALWAYS
+    uint8_t fog_mode = 0;     // fogmode::* (d3d8_fog_blend.h): the FOG register's alpha is the factor
 
     std::string Serialize() const;
     bool operator==(const Key&) const = default;
