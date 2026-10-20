@@ -269,6 +269,41 @@ void D3DDevice_SetModelView()
     call.Return(kD3dOk, 3);
 }
 
+// void D3DDevice_SetVertexBlendModelView(UINT Count, const D3DMATRIX* pModelViews,
+//     const D3DMATRIX* pInverseModelViews, const D3DMATRIX* pProjectionViewport)
+// (stdcall, 16 bytes.) SetModelView for vertex blending: Count model views and
+// the projection-viewport matrix (what GetProjectionViewportMatrix returns);
+// Count 0 returns to world x view and the projection. Blending between the
+// matrices is not modelled: the first model view transforms every vertex.
+void D3DDevice_SetVertexBlendModelView()
+{
+    HleCall call;
+    runtime::GuestMemory& memory = Memory();
+    const uint32_t count = call.Arg(0);
+    const GuestAddress model_views = call.Arg(1);
+    const GuestAddress projection_viewport = call.Arg(3);
+    if (count == 0 || model_views == 0 || projection_viewport == 0)
+    {
+        g_pipeline.model_view_set = false;
+        g_pipeline.composite_set = false;
+        call.Return(kD3dOk, 4);
+        return;
+    }
+    if (count > 1)
+    {
+        TraceOnce("vertex blend model views",
+                  Format("SetVertexBlendModelView: %u model views; blending is not modelled, the first is used",
+                         count));
+    }
+    std::memcpy(g_pipeline.model_view.data(), memory.Translate(model_views), 64);
+    std::array<float, 16> projection = {};
+    std::memcpy(projection.data(), memory.Translate(projection_viewport), 64);
+    g_pipeline.composite = MultiplyMatrices(g_pipeline.model_view, projection);
+    g_pipeline.model_view_set = true;
+    g_pipeline.composite_set = true;
+    call.Return(kD3dOk, 4);
+}
+
 // void D3DDevice_SetStreamSource(UINT StreamNumber, D3DVertexBuffer* pStreamData, UINT Stride)
 void D3DDevice_SetStreamSource()
 {
@@ -555,6 +590,7 @@ void RegisterStateExports(runtime::HleRegistry& registry)
     registry.AddExport("d3d8", "D3DDevice_SetTransform", &D3DDevice_SetTransform);
     registry.AddExport("d3d8", "D3DDevice_GetProjectionViewportMatrix", &D3DDevice_GetProjectionViewportMatrix);
     registry.AddExport("d3d8", "D3DDevice_SetModelView", &D3DDevice_SetModelView);
+    registry.AddExport("d3d8", "D3DDevice_SetVertexBlendModelView", &D3DDevice_SetVertexBlendModelView);
     registry.AddExport("d3d8", "D3DDevice_SetStreamSource", &D3DDevice_SetStreamSource);
     registry.AddExport("d3d8", "D3DDevice_SetVertexShaderInput", &D3DDevice_SetVertexShaderInput);
     registry.AddExport("d3d8", "D3DDevice_SetPalette", &D3DDevice_SetPalette);

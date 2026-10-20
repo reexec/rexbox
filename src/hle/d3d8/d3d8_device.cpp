@@ -826,6 +826,11 @@ void RegisterDeviceExports(runtime::HleRegistry& registry)
     registry.AddExport("d3d8", "D3D_CommonSetDebugRegisters", &AcceptNone);
     registry.AddExport("d3d8", "D3D_KickOffAndWaitForIdle", &AcceptNone);
     registry.AddExport("d3d8", "D3DDevice_MakeSpace", &AcceptNone);
+    // XDK 4531's D3DDevice_Suspend (Crazy Taxi 3, 0x000F9330) only calls
+    // CDevice_SetStateVB(0), flushing deferred state into the push buffer
+    // before the title writes its own methods (BeginPush); draws here read the
+    // state when they happen, so there is nothing to flush.
+    registry.AddExport("d3d8", "D3DDevice_Suspend", &AcceptNone);
 }
 
 }  // namespace rexbox::hle::d3d8
