@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <system_error>
+#include <vector>
 
 namespace rexbox::hle::kernel
 {
@@ -63,12 +64,10 @@ std::string ReadAnsiString(GuestAddress string)
     return text;
 }
 
-// OBJECT_ATTRIBUTES: RootDirectory (+0), ObjectName (+4, PANSI_STRING), Attributes (+8).
-std::string ObjectName(GuestAddress attributes)
+// A name relative to a RootDirectory handle, as OBJECT_ATTRIBUTES and
+// FILE_RENAME_INFORMATION give it.
+std::string NameRelativeTo(uint32_t root, std::string name)
 {
-    runtime::GuestMemory& memory = Memory();
-    std::string name = ReadAnsiString(memory.Read32(attributes + 4));
-    const uint32_t root = memory.Read32(attributes + 0);
     // Pseudo-handles for the two object directories XAPI names relative to:
     // ObDosDevicesDirectory() (-3, "\??\": drive letters such as D:) and
     // ObWin32NamedObjectsDirectory() (-4, named events and the like).
@@ -90,6 +89,13 @@ std::string ObjectName(GuestAddress attributes)
         }
     }
     return name;
+}
+
+// OBJECT_ATTRIBUTES: RootDirectory (+0), ObjectName (+4, PANSI_STRING), Attributes (+8).
+std::string ObjectName(GuestAddress attributes)
+{
+    runtime::GuestMemory& memory = Memory();
+    return NameRelativeTo(memory.Read32(attributes + 0), ReadAnsiString(memory.Read32(attributes + 4)));
 }
 
 void WriteIoStatus(GuestAddress io_status, uint32_t status, uint32_t information)
@@ -542,6 +548,105 @@ void NtQueryInformationFile()
     call.Return(kStatusSuccess, 5);
 }
 
+// The Xbox file system ignores case, and so does the VFS.
+bool SameHostFile(const fs::path& a, const fs::path& b)
+{
+    const std::string x = a.lexically_normal().generic_string();
+    const std::string y = b.lexically_normal().generic_string();
+    return std::equal(x.begin(), x.end(), y.begin(), y.end(), [](char l, char r) {
+        return std::tolower(static_cast<unsigned char>(l)) == std::tolower(static_cast<unsigned char>(r));
+    });
+}
+
+void ReopenStream(KernelObject& object, const fs::path& path)
+{
+    if (object.stream == nullptr)
+    {
+        return;
+    }
+    const std::ios::openmode read = std::ios::binary | std::ios::in;
+    object.stream->open(path, object.read_only ? read : read | std::ios::out);
+    if (!object.stream->is_open() && !object.read_only)
+    {
+        object.stream->open(path, read);
+    }
+}
+
+// FILE_RENAME_INFORMATION: ReplaceIfExists (+0, BOOLEAN), RootDirectory (+4),
+// FileName (+8, OBJECT_STRING). A Windows host cannot rename an open file, so
+// every handle open on it closes its stream, and reopens it on the new name.
+uint32_t RenameFile(KernelObject& file, GuestAddress info, std::string* new_name)
+{
+    runtime::GuestMemory& memory = Memory();
+    const bool replace = memory.Read8(info) != 0;
+    *new_name = NameRelativeTo(memory.Read32(info + 4), ReadAnsiString(info + 8));
+    if (file.kind != KernelObject::Kind::kFile && file.kind != KernelObject::Kind::kDirectory)
+    {
+        return kStatusInvalidParameter;
+    }
+    const std::optional<VfsPath> target = VfsResolve(*new_name);
+    if (!target || target->raw_device)
+    {
+        return kStatusObjectPathNotFound;
+    }
+    if (file.read_only || target->read_only)
+    {
+        return kStatusAccessDenied;
+    }
+    std::error_code ec;
+    const fs::path from = file.host_path;
+    const fs::path& to = target->host_path;
+    if (!fs::exists(to.parent_path(), ec))
+    {
+        return kStatusObjectPathNotFound;
+    }
+    if (SameHostFile(from, to))
+    {
+        return kStatusSuccess;
+    }
+
+    std::lock_guard<std::mutex> lock(State().dispatcher);
+    if (fs::exists(to, ec))
+    {
+        if (!replace)
+        {
+            return kStatusObjectNameCollision;
+        }
+        if (fs::is_directory(to, ec) || !fs::remove(to, ec))
+        {
+            return kStatusAccessDenied;
+        }
+    }
+    std::vector<KernelObject*> sharers;
+    for (const auto& entry : State().handles)
+    {
+        KernelObject* object = entry.second.get();
+        if ((object->kind == KernelObject::Kind::kFile || object->kind == KernelObject::Kind::kDirectory) &&
+            SameHostFile(object->host_path, from) && std::find(sharers.begin(), sharers.end(), object) == sharers.end())
+        {
+            sharers.push_back(object);
+        }
+    }
+    for (KernelObject* object : sharers)
+    {
+        if (object->stream != nullptr)
+        {
+            object->stream->close();
+        }
+    }
+    fs::rename(from, to, ec);
+    for (KernelObject* object : sharers)
+    {
+        ReopenStream(*object, ec ? from : to);
+        if (!ec)
+        {
+            object->host_path = to;
+            object->xbox_path = target->xbox_path;
+        }
+    }
+    return ec ? kStatusAccessDenied : kStatusSuccess;
+}
+
 // NTSTATUS NtSetInformationFile(HANDLE FileHandle, PIO_STATUS_BLOCK IoStatusBlock,
 //     PVOID FileInformation, ULONG Length, FILE_INFORMATION_CLASS FileInformationClass)
 void NtSetInformationFile()
@@ -582,6 +687,30 @@ void NtSetInformationFile()
     case 13:  // FileDispositionInformation
         file->delete_on_close = memory.Read8(info) != 0 && !file->read_only;
         break;
+    case 10:  // FileRenameInformation
+    {
+        static const bool trace_all = std::getenv("REXBOX_TRACE_FILES") != nullptr;
+        const std::string old_name = file->xbox_path;
+        std::string new_name;
+        const uint32_t status = RenameFile(*file, info, &new_name);
+        char code[16];
+        std::snprintf(code, sizeof(code), "%08X", status);
+        if (trace_all)
+        {
+            std::fprintf(stderr, "[kernel] rename %s -> %s -> %s\n", old_name.c_str(), new_name.c_str(), code);
+        }
+        else if (status != kStatusSuccess)
+        {
+            TraceOnce("NtSetInformationFile", "rename " + old_name + " -> " + new_name + " -> " + code);
+        }
+        if (status != kStatusSuccess)
+        {
+            WriteIoStatus(io_status, status, 0);
+            call.Return(status, 5);
+            return;
+        }
+        break;
+    }
     default:
         TraceOnce("NtSetInformationFile", "class " + std::to_string(info_class) + " unsupported");
         WriteIoStatus(io_status, kStatusInvalidParameter, 0);

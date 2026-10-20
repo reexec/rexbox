@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <iterator>
 #include <string>
 
 namespace
@@ -367,6 +368,107 @@ uint32_t ReadWithCompletion(uint32_t file, GuestAddress overlapped, uint32_t len
                                length, offset_block});
 }
 
+// Writes `text` at `buffer` and an OBJECT_STRING for it (Length, MaximumLength, Buffer) at `address`.
+void WriteObjectString(GuestAddress address, GuestAddress buffer, const std::string& text)
+{
+    std::memcpy(g_memory->Translate(buffer), text.c_str(), text.size() + 1);
+    g_memory->Write16(address + 0, static_cast<uint16_t>(text.size()));
+    g_memory->Write16(address + 2, static_cast<uint16_t>(text.size() + 1));
+    g_memory->Write32(address + 4, buffer);
+}
+
+// NtCreateFile of `name` (relative to `root`); the handle in *handle on success.
+uint32_t CreateNamed(const std::string& name, uint32_t root, uint32_t disposition, uint32_t options, uint32_t* handle)
+{
+    const GuestAddress text = kScratch + 0x800;
+    const GuestAddress string = kScratch + 0x880;
+    const GuestAddress attributes = kScratch + 0x890;
+    const GuestAddress handle_out = kScratch + 0x8A0;
+    const GuestAddress io_status = kScratch + 0x8A8;
+    WriteObjectString(string, text, name);
+    g_memory->Write32(attributes + 0, root);
+    g_memory->Write32(attributes + 4, string);
+    g_memory->Write32(attributes + 8, 0x40);  // OBJ_CASE_INSENSITIVE
+    const uint32_t status =
+        Call("NtCreateFile", {handle_out, 0xC0110000, attributes, io_status, 0, 0x80, 7, disposition, options});
+    *handle = status == 0 ? g_memory->Read32(handle_out) : 0;
+    return status;
+}
+
+// NtSetInformationFile(FileRenameInformation) as XAPI's MoveFileEx calls it.
+uint32_t Rename(uint32_t file, const std::string& name, uint32_t root, bool replace)
+{
+    const GuestAddress text = kScratch + 0x900;
+    const GuestAddress info = kScratch + 0x980;
+    const GuestAddress io_status = kScratch + 0x998;
+    g_memory->Write32(info + 0, replace ? 1 : 0);  // ReplaceIfExists
+    g_memory->Write32(info + 4, root);             // RootDirectory
+    WriteObjectString(info + 8, text, name);       // FileName
+    return Call("NtSetInformationFile", {file, io_status, info, 0x10, 10});
+}
+
+std::string ReadHostFile(const std::filesystem::path& path)
+{
+    std::ifstream stream(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+}
+
+void ProbeRename(const std::filesystem::path& hdd_root)
+{
+    constexpr uint32_t kFileOpen = 1;
+    constexpr uint32_t kFileOverwriteIf = 5;
+    constexpr uint32_t kNonDirectory = 0x40;
+    const std::string partition = "\\Device\\Harddisk0\\Partition1";
+    const std::filesystem::path host = hdd_root / "Partition1";
+    for (const char* stale : {"rename_old.bin", "rename_new.bin", "rename_other.bin"})
+    {
+        std::filesystem::remove(host / stale);
+    }
+
+    uint32_t file = 0;
+    Check(CreateNamed(partition + "\\rename_old.bin", 0, kFileOverwriteIf, kNonDirectory, &file) == 0,
+          "create rename_old.bin on Partition1");
+    const GuestAddress data = kScratch + 0xA00;
+    const GuestAddress offset = kScratch + 0xA40;
+    const GuestAddress io_status = kScratch + 0xA48;
+    std::memcpy(g_memory->Translate(data), "rename", 6);
+    g_memory->Write32(offset, 0);
+    g_memory->Write32(offset + 4, 0);
+    Call("NtWriteFile", {file, 0, 0, 0, io_status, data, 6, offset});
+
+    Check(Rename(file, partition + "\\rename_new.bin", 0, false) == 0, "rename an open file by an absolute name");
+    Check(!std::filesystem::exists(host / "rename_old.bin") && ReadHostFile(host / "rename_new.bin") == "rename",
+          "the host file moved with its contents");
+    std::memset(g_memory->Translate(data), 0, 6);
+    Check(Call("NtReadFile", {file, 0, 0, 0, io_status, data, 6, offset}) == 0 &&
+              std::memcmp(g_memory->Translate(data), "rename", 6) == 0,
+          "the renamed handle still reads");
+    uint32_t other = 0;
+    Check(CreateNamed(partition + "\\rename_old.bin", 0, kFileOpen, kNonDirectory, &other) == 0xC0000034,
+          "the old name is gone (STATUS_OBJECT_NAME_NOT_FOUND)");
+    Check(CreateNamed(partition + "\\rename_new.bin", 0, kFileOpen, kNonDirectory, &other) == 0,
+          "the new name opens");
+    Call("NtClose", {other});
+
+    Check(CreateNamed(partition + "\\rename_other.bin", 0, kFileOverwriteIf, kNonDirectory, &other) == 0,
+          "create rename_other.bin");
+    Call("NtClose", {other});
+    uint32_t directory = 0;
+    Check(CreateNamed(partition, 0, kFileOpen, 0x01, &directory) == 0, "open Partition1 as a directory");
+    Check(Rename(file, "rename_other.bin", directory, false) == 0xC0000035,
+          "an existing target without ReplaceIfExists collides");
+    Check(Rename(file, "rename_other.bin", directory, true) == 0 && !std::filesystem::exists(host / "rename_new.bin") &&
+              ReadHostFile(host / "rename_other.bin") == "rename",
+          "ReplaceIfExists replaces it (name relative to a directory handle)");
+    Call("NtClose", {directory});
+    Call("NtClose", {file});
+
+    const uint32_t disc = OpenGameFile("probe.bin");
+    Check(disc != 0 && Rename(disc, "D:\\renamed.bin", 0xFFFFFFFD, false) == 0xC0000022,
+          "renaming on the read-only disc is refused");
+    Call("NtClose", {disc});
+}
+
 void ProbeUserApc(const std::filesystem::path& game_directory)
 {
     g_registry->AddExport("probe", "ProbeCompletionRoutine", &ProbeCompletionRoutine);
@@ -580,6 +682,7 @@ int main()
     ProbeGuestHeapRegions();
     ProbeDosDevicesRoot(scratch);
     ProbeUserApc(scratch);
+    ProbeRename(scratch / "hdd");
     ProbeGuestWindow();
     ProbeTimers();
 
