@@ -5,6 +5,7 @@
 #include "d3d8_resource.h"
 #include "d3d8_shader.h"
 #include "d3d8_trace.h"
+#include "d3d8_vsh.h"
 
 #include <cstring>
 
@@ -168,6 +169,36 @@ void D3DDevice_SetTransform()
         std::memcpy(g_pipeline.transforms[state].data(), Memory().Translate(matrix), 64);
     }
     call.Return(kD3dOk, 2);
+}
+
+// void D3DDevice_GetProjectionViewportMatrix(D3DMATRIX* pProjectionViewport)
+// The projection times the viewport mapping into the screen coordinates the
+// runtime's vertex-shader epilogue produces (c[58] scale, c[59] offset;
+// vsh::ViewportConstants), so a title's own screen-space math agrees with it.
+void D3DDevice_GetProjectionViewportMatrix()
+{
+    HleCall call;
+    const GuestAddress out = call.Arg(0);
+    if (out != 0)
+    {
+        const Viewport& vp = State().viewport;
+        float scale[4] = {};
+        float offset[4] = {};
+        vsh::ViewportConstants(vp.x, vp.y, vp.width, vp.height, scale, offset);
+        const std::array<float, 16>& p = g_pipeline.transforms[ts::kProjection];
+        float m[16] = {};
+        for (uint32_t row = 0; row < 4; ++row)
+        {
+            const float w = p[row * 4 + 3];
+            for (uint32_t column = 0; column < 3; ++column)
+            {
+                m[row * 4 + column] = p[row * 4 + column] * scale[column] + w * offset[column];
+            }
+            m[row * 4 + 3] = w;
+        }
+        std::memcpy(Memory().Translate(out), m, sizeof(m));
+    }
+    call.Return(kD3dOk, 1);
 }
 
 // void D3DDevice_SetStreamSource(UINT StreamNumber, D3DVertexBuffer* pStreamData, UINT Stride)
@@ -384,6 +415,7 @@ void RegisterStateExports(runtime::HleRegistry& registry)
     registry.AddExport("d3d8", "D3DDevice_SetTextureState_BumpEnv", &D3DDevice_SetTextureState_BumpEnv);
     registry.AddExport("d3d8", "D3DDevice_SetTexture", &D3DDevice_SetTexture);
     registry.AddExport("d3d8", "D3DDevice_SetTransform", &D3DDevice_SetTransform);
+    registry.AddExport("d3d8", "D3DDevice_GetProjectionViewportMatrix", &D3DDevice_GetProjectionViewportMatrix);
     registry.AddExport("d3d8", "D3DDevice_SetStreamSource", &D3DDevice_SetStreamSource);
     registry.AddExport("d3d8", "D3DDevice_SetIndices", &D3DDevice_SetIndices);
     registry.AddExport("d3d8", "D3DDevice_SetVertexShader", &D3DDevice_SetVertexShader);
