@@ -26,6 +26,8 @@ namespace
 {
 
 constexpr uint32_t kHashSamples = 256;
+// P8 variants kept per texture header; past this the least recently used goes.
+constexpr size_t kMaxPaletteVariants = 16;
 
 // D3DTEXTUREADDRESS and D3DTEXTUREFILTERTYPE (Xbox; inferred, PC numbering
 // plus CLAMPTOEDGE 5).
@@ -44,15 +46,23 @@ struct CachedTexture
     uint32_t data = 0;
     uint32_t hash = 0;
     GuestAddress palette = 0;      // P8: the stage's palette at the upload
-    uint32_t palette_data = 0;     // its Data and Common, and a hash of its entries
+    uint32_t palette_data = 0;     // its Data and Common (the variant's key), and a hash of its entries
     uint32_t palette_common = 0;
     uint32_t palette_hash = 0;
     uint32_t checked_frame = 0xFFFFFFFF;
+    uint32_t used_frame = 0;
     bool written = false;
     uint64_t gl_bytes = 0;  // RGBA8 levels uploaded (for the settings menu)
 };
 
-std::unordered_map<GuestAddress, CachedTexture> g_textures;
+// A texture header's GL copies: one, or for P8 one per palette a title draws
+// it with (the same texture in several colourings).
+struct TextureEntry
+{
+    std::vector<CachedTexture> variants;
+};
+
+std::unordered_map<GuestAddress, TextureEntry> g_textures;
 
 // Whether DXT goes up compressed: S3TC on the host, unless REXBOX_DXT=cpu
 // asks for the CPU decode (for comparison). Reported once.
@@ -283,6 +293,62 @@ bool Upload(GuestAddress header, CachedTexture* cached)
     return true;
 }
 
+void DeleteVariant(CachedTexture& variant)
+{
+    if (variant.bound.texture != 0)
+    {
+        Gl().DeleteTextures(1, &variant.bound.texture);
+        ForgetUnitBindings();
+    }
+}
+
+// The variant for this palette (Data and Common), made on first use; a
+// texture that is not P8 has exactly one.
+CachedTexture& SelectVariant(TextureEntry& entry, bool paletted, uint32_t palette_data, uint32_t palette_common,
+                             uint32_t frame)
+{
+    std::vector<CachedTexture>& variants = entry.variants;
+    if (!paletted)
+    {
+        while (variants.size() > 1)
+        {
+            DeleteVariant(variants.back());
+            variants.pop_back();
+        }
+        if (variants.empty())
+        {
+            variants.emplace_back();
+        }
+        variants[0].used_frame = frame;
+        return variants[0];
+    }
+    for (CachedTexture& variant : variants)
+    {
+        if (variant.palette_data == palette_data && variant.palette_common == palette_common)
+        {
+            variant.used_frame = frame;
+            return variant;
+        }
+    }
+    CachedTexture* slot = nullptr;
+    if (variants.size() < kMaxPaletteVariants)
+    {
+        slot = &variants.emplace_back();
+    }
+    else
+    {
+        slot = &*std::min_element(variants.begin(), variants.end(), [](const CachedTexture& a, const CachedTexture& b) {
+            return a.used_frame < b.used_frame;
+        });
+        DeleteVariant(*slot);
+        *slot = CachedTexture{};
+    }
+    slot->palette_data = palette_data;
+    slot->palette_common = palette_common;
+    slot->used_frame = frame;
+    return *slot;
+}
+
 GLint AddressMode(uint32_t value)
 {
     switch (value)
@@ -327,21 +393,17 @@ BoundTexture ResolveTexture(GuestAddress header, GuestAddress palette)
         target.unnormalized = size_field != 0;
         return target;
     }
-    CachedTexture& cached = g_textures[header];
-    bool upload = cached.bound.texture == 0 || cached.written || format_field != cached.format_field ||
-                  size_field != cached.size_field || data != cached.data;
-    // A P8 texture also depends on its stage's palette.
+    // A P8 texture also depends on its stage's palette: each palette has its
+    // own variant, so switching palettes between draws does not decode again.
     const bool paletted = ((format_field >> header::kFormatFormatShift) & 0xFF) == fmt::kP8;
     const uint32_t palette_data = paletted && palette != 0 ? memory.Read32(palette + header::kData) : 0;
     const uint32_t palette_common = paletted && palette != 0 ? memory.Read32(palette + header::kCommon) : 0;
     const uint32_t palette_bytes = (256u >> (palette_common >> header::kPaletteSizeShift)) * 4;
-    if (paletted)
-    {
-        upload = upload || palette != cached.palette || palette_data != cached.palette_data ||
-                 palette_common != cached.palette_common;
-    }
-    // Writes without a lock: compare a sampled hash once per frame.
     const uint32_t frame = State().frame_count;
+    CachedTexture& cached = SelectVariant(g_textures[header], paletted, palette_data, palette_common, frame);
+    bool upload = cached.bound.texture == 0 || cached.written || format_field != cached.format_field ||
+                  size_field != cached.size_field || data != cached.data;
+    // Writes without a lock: compare a sampled hash once per frame.
     const LevelLayout layout0 = HeaderLevelLayout(header, 0);
     if (!upload && cached.checked_frame != frame)
     {
@@ -449,12 +511,15 @@ void BindStageTexture(uint32_t stage, const BoundTexture& texture)
 TextureCacheUse TextureCacheBytes()
 {
     TextureCacheUse use;
-    for (const auto& [header, cached] : g_textures)
+    for (const auto& [header, entry] : g_textures)
     {
-        if (cached.bound.texture != 0)
+        for (const CachedTexture& cached : entry.variants)
         {
-            ++use.count;
-            use.bytes += cached.gl_bytes;
+            if (cached.bound.texture != 0)
+            {
+                ++use.count;
+                use.bytes += cached.gl_bytes;
+            }
         }
     }
     return use;
@@ -465,7 +530,10 @@ void MarkTextureWritten(GuestAddress header)
     const auto it = g_textures.find(header);
     if (it != g_textures.end())
     {
-        it->second.written = true;
+        for (CachedTexture& cached : it->second.variants)
+        {
+            cached.written = true;
+        }
     }
 }
 
@@ -476,10 +544,9 @@ void ForgetTexture(GuestAddress header)
     {
         return;
     }
-    if (it->second.bound.texture != 0)
+    for (CachedTexture& cached : it->second.variants)
     {
-        Gl().DeleteTextures(1, &it->second.bound.texture);
-        ForgetUnitBindings();
+        DeleteVariant(cached);
     }
     g_textures.erase(it);
 }
