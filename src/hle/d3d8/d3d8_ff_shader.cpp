@@ -1,5 +1,7 @@
 #include "d3d8_ff_shader.h"
 
+#include "d3d8_fog_blend.h"
+
 #include <cmath>
 #include <cstdio>
 
@@ -245,6 +247,16 @@ std::string FixedFunctionKey::Serialize() const
     {
         text += ";np";
     }
+    if (fog_mode != 0)
+    {
+        std::snprintf(buffer, sizeof(buffer), ";f%u%u", fog_mode, fog_source);
+        text += buffer;
+    }
+    if (blend_matrices != 0)
+    {
+        std::snprintf(buffer, sizeof(buffer), ";b%u%u", blend_matrices, blend_weights);
+        text += buffer;
+    }
     if (lighting)
     {
         std::snprintf(buffer, sizeof(buffer), ";l%d%u%u%u%u:", local_viewer ? 1 : 0, material_source[0],
@@ -281,6 +293,9 @@ uint64_t FixedFunctionKey::Hash() const
     hash = HashMix(hash, (pretransformed ? 1u : 0u) | (has_diffuse ? 2u : 0u) | (has_specular ? 4u : 0u) |
                              (specular_enable ? 8u : 0u) | (stage_coords ? 16u : 0u) | (has_normal ? 32u : 0u) |
                              (normalize_normals ? 64u : 0u) | (packed_normal ? 128u : 0u) |
+                             (static_cast<uint64_t>(fog_mode) << 16) | (static_cast<uint64_t>(fog_source) << 20) |
+                             (static_cast<uint64_t>(blend_matrices) << 24) |
+                             (static_cast<uint64_t>(blend_weights) << 28) |
                              (static_cast<uint64_t>(tex_coords) << 8));
     for (const uint8_t components : tex_components)
     {
@@ -366,8 +381,17 @@ std::string GenerateFixedFunctionVertexShader(const FixedFunctionKey& key, bool 
     {
         text += "layout(location = " + Number(attr::kNormal) + ") in vec3 a_normal;\n";
     }
+    // Vertex blending: eye space is the weighted sum over the model views.
+    const bool blend = key.blend_matrices != 0 && !key.pretransformed;
+    if (blend)
+    {
+        text += "layout(location = " + Number(attr::kBlendWeight) + ") in vec4 a_blend;\n"
+                "uniform mat4 u_blend_model_view[4];\n"
+                "uniform mat4 u_blend_normal[4];\n";
+    }
+    const bool fog = key.fog_mode != fogmode::kOff;
     const uint32_t active = ActiveStages(key);
-    bool eye_position = false;
+    bool eye_position = fog && !key.pretransformed && key.fog_source != fogsource::kSpecular;
     bool eye_normal = false;
     if (key.stage_coords)
     {
@@ -391,13 +415,17 @@ std::string GenerateFixedFunctionVertexShader(const FixedFunctionKey& key, bool 
     text += "uniform mat4 u_transform;\n"
             "uniform vec4 u_target;\n"
             "uniform float u_wide;\n";  // clip x scale for a widened back buffer (Hor+)
-    if (eye_position)
+    if (eye_position && !blend)
     {
         text += "uniform mat4 u_world_view;\n";
     }
-    if (eye_normal && key.has_normal)
+    if (eye_normal && key.has_normal && !blend)
     {
         text += "uniform mat4 u_normal_matrix;\n";
+    }
+    if (fog)
+    {
+        text += "out float v_fog;\n";
     }
     if (lighting)
     {
@@ -433,6 +461,28 @@ std::string GenerateFixedFunctionVertexShader(const FixedFunctionKey& key, bool 
                 "                    max(float(int(np << 10u) >> 21) / 1023.0, -1.0),\n"
                 "                    max(float(int(np) >> 22) / 511.0, -1.0));\n";
     }
+    if (blend)
+    {
+        // a_blend holds the given weights; with one fewer than the matrices
+        // the last is 1 minus the others.
+        const uint32_t matrices = key.blend_matrices;
+        text += "    vec4 bw = a_blend;\n";
+        if (key.blend_weights < matrices)
+        {
+            std::string rest = "1.0";
+            for (uint32_t i = 0; i < key.blend_weights; ++i)
+            {
+                rest += " - bw[" + Number(i) + "]";
+            }
+            text += "    bw[" + Number(matrices - 1) + "] = " + rest + ";\n";
+        }
+        text += "    vec4 blend_eye = vec4(0.0);\n";
+        for (uint32_t i = 0; i < matrices; ++i)
+        {
+            text += "    blend_eye += bw[" + Number(i) + "] * (u_blend_model_view[" + Number(i) +
+                    "] * vec4(a_position.xyz, 1.0));\n";
+        }
+    }
     if (key.pretransformed)
     {
         // Screen pixels (top-left origin) and 1/w; keep w for perspective-correct interpolation.
@@ -445,8 +495,11 @@ std::string GenerateFixedFunctionVertexShader(const FixedFunctionKey& key, bool 
     else
     {
         // D3D clip space has 0 <= z <= w; GL's -w <= z <= w.
-        text += "    vec4 p = u_transform * vec4(a_position.xyz, 1.0);\n"
-                "    gl_Position = vec4(p.x * u_wide, p.y, p.z * 2.0 - p.w, p.w);\n";
+        // Blended vertices are in eye space already; u_transform is then the
+        // projection alone.
+        text += blend ? "    vec4 p = u_transform * blend_eye;\n"
+                      : "    vec4 p = u_transform * vec4(a_position.xyz, 1.0);\n";
+        text += "    gl_Position = vec4(p.x * u_wide, p.y, p.z * 2.0 - p.w, p.w);\n";
     }
     // D3DCOLOR is stored B, G, R, A.
     if (!lighting)
@@ -466,9 +519,21 @@ std::string GenerateFixedFunctionVertexShader(const FixedFunctionKey& key, bool 
     // Camera space is World*View; normals take its inverse transpose.
     if (eye_position)
     {
-        text += "    vec3 eye_position = (u_world_view * vec4(a_position.xyz, 1.0)).xyz;\n";
+        text += blend ? "    vec3 eye_position = blend_eye.xyz;\n"
+                      : "    vec3 eye_position = (u_world_view * vec4(a_position.xyz, 1.0)).xyz;\n";
     }
-    if (eye_normal)
+    if (eye_normal && blend && key.has_normal)
+    {
+        std::string sum;
+        for (uint32_t i = 0; i < key.blend_matrices; ++i)
+        {
+            sum += std::string(i == 0 ? "" : " + ") + "bw[" + Number(i) + "] * (mat3(u_blend_normal[" + Number(i) +
+                   "]) * a_normal)";
+        }
+        text += key.normalize_normals ? "    vec3 eye_normal = normalize(" + sum + ");\n"
+                                      : "    vec3 eye_normal = " + sum + ";\n";
+    }
+    else if (eye_normal)
     {
         text += !key.has_normal          ? "    vec3 eye_normal = vec3(0.0);\n"
                 : key.normalize_normals ? "    vec3 eye_normal = normalize(mat3(u_normal_matrix) * a_normal);\n"
@@ -540,6 +605,25 @@ std::string GenerateFixedFunctionVertexShader(const FixedFunctionKey& key, bool 
             text += "    " + out + ".w = " + out + "." + "xyz"[count - 1] + ";\n";
         }
     }
+    if (fog)
+    {
+        // The fog coordinate: the specular alpha for D3DFOG_NONE; for a table
+        // mode the eye-space z (sign kept) or distance, or w for screen-space
+        // vertices (inferred).
+        if (key.fog_source == fogsource::kSpecular)
+        {
+            text += "    v_fog = v_specular.a;\n";
+        }
+        else if (key.pretransformed)
+        {
+            text += "    v_fog = w;\n";
+        }
+        else
+        {
+            text += key.fog_source == fogsource::kRadial ? "    v_fog = length(eye_position);\n"
+                                                          : "    v_fog = eye_position.z;\n";
+        }
+    }
     text += "}\n";
     return text;
 }
@@ -565,6 +649,12 @@ std::string GenerateFixedFunctionFragmentShader(const FixedFunctionKey& key, boo
                 text += "uniform vec2 u_tex_scale" + Number(s) + ";\n";
             }
         }
+    }
+    if (key.fog_mode != fogmode::kOff)
+    {
+        text += "in float v_fog;\n"
+                "uniform vec4 u_fog_color;\n" +
+                FogFunctionGlsl(key.fog_mode);
     }
     text += "uniform vec4 u_tfactor;\n"
             "uniform float u_alpha_ref;\n"
@@ -631,6 +721,11 @@ std::string GenerateFixedFunctionFragmentShader(const FixedFunctionKey& key, boo
                                               "true"};
         text += "    float alpha = floor(current.a * 255.0 + 0.5);\n";
         text += std::string("    if (!(") + kTests[key.alpha_func & 7] + ")) discard;\n";
+    }
+    if (key.fog_mode != fogmode::kOff)
+    {
+        // The NV2A blends towards the fog colour after the combiners; alpha is kept.
+        text += "    current.rgb = mix(u_fog_color.rgb, current.rgb, rexbox_fog(v_fog));\n";
     }
     text += "    o_color = current;\n}\n";
     return text;

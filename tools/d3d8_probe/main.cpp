@@ -9,6 +9,7 @@
 // Usage: rexbox_d3d8_probe        (exit code 0 when every check passes)
 
 #include "d3d8_ff_shader.h"
+#include "d3d8_fog_blend.h"
 #include "d3d8_fvf.h"
 #include "d3d8_gamma.h"
 #include "d3d8_immediate.h"
@@ -845,6 +846,88 @@ void CheckXdk4531VertexInput()
     ExpectEqual(RenderStateFromNv2aMethod(0x1234), kNoRenderState, "an unrelated method names no state");
 }
 
+// Fog from the states as the XDK 4531 flush reads them, the factor, skin
+// modes, blend weights in a declaration, and the shaders that carry them.
+void CheckFogAndBlending()
+{
+    const FogSettings off = FogFromStates(0, 3, 0);
+    ExpectEqual(off.mode, fogmode::kOff, "fog disabled is off");
+    const FogSettings ct3 = FogFromStates(1, 1, 0);  // Crazy Taxi 3's demo
+    Expect(ct3.mode == fogmode::kExp && ct3.source == fogsource::kPlanar, "table mode 1 is EXP, planar");
+    Expect(FogFactor(ct3.mode, 300.0f, -10.0f, -500.0f, -0.0f) == 1.0f, "EXP with density 0 leaves a factor of 1");
+    const FogSettings linear_range = FogFromStates(1, 3, 1);
+    Expect(linear_range.mode == fogmode::kLinear && linear_range.source == fogsource::kRadial,
+           "table mode 3 is LINEAR, range fog is radial");
+    const FogSettings vertex = FogFromStates(1, 0, 0);
+    Expect(vertex.mode == fogmode::kVertex && vertex.source == fogsource::kSpecular,
+           "table mode 0 takes the vertex's value from the specular alpha");
+    Expect(std::fabs(FogFactor(fogmode::kLinear, -255.0f, -10.0f, -500.0f, 0.0f) - 0.5f) < 1e-6f,
+           "LINEAR halfway between negative start and end is 0.5");
+    Expect(FogFactor(fogmode::kLinear, 600.0f, 10.0f, 500.0f, 0.0f) == 0.0f &&
+               FogFactor(fogmode::kLinear, 0.0f, 10.0f, 500.0f, 0.0f) == 1.0f,
+           "LINEAR clamps past end and before start");
+    Expect(FogFactor(fogmode::kLinear, 5.0f, 8.0f, 8.0f, 0.0f) == 1.0f &&
+               FogFactor(fogmode::kLinear, 9.0f, 8.0f, 8.0f, 0.0f) == 0.0f,
+           "LINEAR with start = end is a step at end");
+    Expect(std::fabs(FogFactor(fogmode::kExp, 2.0f, 0.0f, 0.0f, 0.5f) - std::exp(-1.0f)) < 1e-6f,
+           "EXP is exp(-density * c)");
+    Expect(std::fabs(FogFactor(fogmode::kExp2, 2.0f, 0.0f, 0.0f, 0.5f) - std::exp(-1.0f)) < 1e-6f,
+           "EXP2 is exp(-(density * c)^2)");
+
+    uint32_t matrices = 0;
+    uint32_t weights = 0;
+    Expect(!SkinMatrices(0, &matrices, &weights) && !SkinMatrices(7, &matrices, &weights),
+           "skin modes 0 and 7 blend nothing");
+    const uint32_t expected[7][2] = {{0, 0}, {2, 1}, {2, 2}, {3, 2}, {3, 3}, {4, 3}, {4, 4}};
+    bool modes = true;
+    for (uint32_t mode = 1; mode <= 6; ++mode)
+    {
+        modes = modes && SkinMatrices(mode, &matrices, &weights) && matrices == expected[mode][0] &&
+                weights == expected[mode][1];
+    }
+    Expect(modes, "skin modes 1..6: 2, 2, 3, 3, 4, 4 matrices, odd modes with the last weight implicit");
+
+    // D3DVSD_STREAM(0); v0 FLOAT3; v1 FLOAT2 (weights); v2 FLOAT3; END.
+    const std::vector<uint32_t> tokens = {0x20000000, 0x40320000, 0x40220001, 0x40320002, 0xFFFFFFFF};
+    vsh::Declaration declaration;
+    std::string error;
+    VertexLayout layout;
+    Expect(vsh::ParseDeclaration(tokens, &declaration, &error) && LayoutFromDeclaration(declaration, &layout, &error),
+           "a declaration with blend weights maps to a layout: " + error);
+    Expect(layout.blend_offset == 12 && layout.blend_weights == 2 && layout.normal == 20,
+           "register 1 is the blend weights (offset 12, two floats)");
+    // Crazy Taxi 3's weights: v1 PBYTE4 (0x44).
+    const std::vector<uint32_t> pbyte = {0x20000000, 0x40320000, 0x40440001, 0xFFFFFFFF};
+    Expect(vsh::ParseDeclaration(pbyte, &declaration, &error) && LayoutFromDeclaration(declaration, &layout, &error) &&
+               layout.blend_kind == vsh::ElementKind::kNormByte && layout.blend_weights == 4 && layout.stride == 16,
+           "PBYTE4 blend weights are taken (normalized bytes)");
+    VertexLayout fvf;
+    Expect(DecodeFvf(0x8 | 0x10, &fvf) && fvf.blend_offset == 12 && fvf.blend_weights == 2,
+           "XYZB2 puts two weights after the position");
+
+    FixedFunctionKey key;
+    key.stage_coords = true;  // fixed-function vertex processing
+    key.has_normal = true;
+    key.lighting = true;
+    key.fog_mode = fogmode::kLinear;
+    key.fog_source = fogsource::kPlanar;
+    key.blend_matrices = 3;
+    key.blend_weights = 2;
+    const std::string vs = GenerateFixedFunctionVertexShader(key, false);
+    Expect(Contains(vs, "bw[2] = 1.0 - bw[0] - bw[1]") && Contains(vs, "u_blend_model_view[2]") &&
+               Contains(vs, "u_transform * blend_eye") && Contains(vs, "v_fog = eye_position.z"),
+           "the blended vertex shader sums three model views and writes the planar fog coordinate");
+    const std::string fs = GenerateFixedFunctionFragmentShader(key, false);
+    Expect(Contains(fs, "mix(u_fog_color.rgb, current.rgb, rexbox_fog(v_fog))") && Contains(fs, "u_fog_params.y"),
+           "the fragment shader blends towards the fog colour with the LINEAR factor");
+    psh::Key pixel;
+    pixel.fog_mode = fogmode::kExp;
+    std::string unsupported;
+    const std::string pixel_shader = psh::GenerateFragmentShader(pixel, false, &unsupported);
+    Expect(Contains(pixel_shader, "vec4(u_fog_color.rgb, rexbox_fog(v_fog))"),
+           "a pixel shader's FOG register carries the factor");
+}
+
 }  // namespace
 
 int main()
@@ -863,6 +946,7 @@ int main()
     CheckRenderStateLayout();
     CheckPaletted();
     CheckXdk4531VertexInput();
+    CheckFogAndBlending();
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

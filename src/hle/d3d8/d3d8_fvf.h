@@ -40,7 +40,9 @@ struct VertexLayout
     uint32_t position = 0;           // byte offset (0 for an FVF)
     bool pretransformed = false;     // XYZRHW: screen x, y, z and 1/w
     uint32_t position_components = 0;  // 3, or 4 for XYZRHW
-    uint32_t blend_weights = 0;      // XYZB1..4: floats after the position
+    uint32_t blend_weights = 0;      // XYZB1..4 (floats after the position) or D3DVSDE_BLENDWEIGHT
+    int blend_offset = kAbsent;      // byte offset of the weights
+    vsh::ElementKind blend_kind = vsh::ElementKind::kFloat;  // or kNormByte (PBYTE), kNormShort
     int normal = kAbsent;            // byte offsets, kAbsent when missing
     bool normal_packed = false;      // the normal is a D3DVSDT_NORMPACKED3 DWORD
     int point_size = kAbsent;
@@ -56,9 +58,9 @@ struct VertexLayout
 bool DecodeFvf(uint32_t code, VertexLayout* layout);
 
 // The fixed-function layout of a vertex shader created with a declaration
-// and no microcode: registers by D3DVSDE meaning (0 position, 2 normal, 3
-// diffuse, 4 specular, 9..12 texture coordinates; blend weights, fog and
-// point size are not read). False, with the reason, for an element the
+// and no microcode: registers by D3DVSDE meaning (0 position, 1 blend
+// weights, 2 normal, 3 diffuse, 4 specular, 9..12 texture coordinates; fog
+// and point size are not read). False, with the reason, for an element the
 // fixed-function path cannot take or a stream other than 0.
 bool LayoutFromDeclaration(const vsh::Declaration& declaration, VertexLayout* layout, std::string* error);
 

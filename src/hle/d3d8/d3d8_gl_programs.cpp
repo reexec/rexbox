@@ -345,6 +345,14 @@ void FillFixedFunctionUniforms(GLuint program, FixedFunctionProgram* out)
     entry.light_direction = gl.GetUniformLocation(program, "u_light_direction");
     entry.light_attenuation = gl.GetUniformLocation(program, "u_light_attenuation");
     entry.light_cone = gl.GetUniformLocation(program, "u_light_cone");
+    entry.fog_color = gl.GetUniformLocation(program, "u_fog_color");
+    entry.fog_params = gl.GetUniformLocation(program, "u_fog_params");
+    for (uint32_t i = 0; i < 4; ++i)
+    {
+        const std::string index = "[" + std::to_string(i) + "]";
+        entry.blend_model_view[i] = gl.GetUniformLocation(program, ("u_blend_model_view" + index).c_str());
+        entry.blend_normal[i] = gl.GetUniformLocation(program, ("u_blend_normal" + index).c_str());
+    }
     BindSamplers(program, entry.tex_scale);
 }
 
@@ -429,6 +437,8 @@ const VertexProgramGl* GetVertexProgram(const ProgramShader& shader, const Fixed
     entry.wide = Gl().GetUniformLocation(program, "u_wide");
     entry.tfactor = gl.GetUniformLocation(program, "u_tfactor");
     entry.alpha_ref = gl.GetUniformLocation(program, "u_alpha_ref");
+    entry.fog_color = gl.GetUniformLocation(program, "u_fog_color");
+    entry.fog_params = gl.GetUniformLocation(program, "u_fog_params");
     BindSamplers(program, entry.tex_scale);
     TraceOnce("program " + id, Format("program %u built for vertex program %s", program, id.c_str()));
     return &entry;
@@ -468,6 +478,8 @@ const VertexProgramGl* GetVertexPixelProgram(const ProgramShader& shader, const 
     entry.constants = ConstantLocations(program);
     entry.wide = Gl().GetUniformLocation(program, "u_wide");
     entry.alpha_ref = gl.GetUniformLocation(program, "u_alpha_ref");
+    entry.fog_color = gl.GetUniformLocation(program, "u_fog_color");
+    entry.fog_params = gl.GetUniformLocation(program, "u_fog_params");
     entry.combiner = CombinerUniforms(program);
     BindSamplers(program, entry.tex_scale);
     TraceOnce("program " + id, Format("program %u built for vertex program and pixel shader %s", program, id.c_str()));

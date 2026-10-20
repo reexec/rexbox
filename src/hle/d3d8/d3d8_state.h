@@ -90,6 +90,12 @@ struct PipelineState
     bool composite_set = false;
     std::array<float, 16> model_view = {};
     std::array<float, 16> composite = {};
+    // SetVertexBlendModelView: up to four model views and the
+    // projection-viewport matrix, for vertex blending (D3DRS_VERTEXBLEND);
+    // blend_count 0 when not set.
+    uint32_t blend_count = 0;
+    std::array<std::array<float, 16>, 4> blend_model_views = {};
+    std::array<float, 16> projection_viewport = {};
     uint32_t shader_constant_mode = 0;
     float screen_space_offset_x = 0.0f;
     float screen_space_offset_y = 0.0f;

@@ -81,6 +81,12 @@ struct FixedFunctionProgram
     int light_direction = -1;
     int light_attenuation = -1;
     int light_cone = -1;
+    // Fog (u_fog_color, u_fog_params) and vertex blending (each element of
+    // u_blend_model_view[4] and u_blend_normal[4]).
+    int fog_color = -1;
+    int fog_params = -1;
+    int blend_model_view[4] = {-1, -1, -1, -1};
+    int blend_normal[4] = {-1, -1, -1, -1};
     // GetFixedFunctionPixelProgram only.
     CombinerLocations combiner;
     mutable UniformCache uniforms;
@@ -104,6 +110,8 @@ struct VertexProgramGl
     int tfactor = -1;
     int alpha_ref = -1;
     int tex_scale[kFixedFunctionStages] = {-1, -1, -1, -1};
+    int fog_color = -1;   // the fragment stage's fog (u_fog_color, u_fog_params)
+    int fog_params = -1;
     // Register-combiner fragment stage (GetVertexPixelProgram) only.
     CombinerLocations combiner;
     mutable UniformCache uniforms;
