@@ -296,6 +296,7 @@ FixedFunctionKey BuildKey(const VertexLayout& layout, BoundTexture textures[kFix
     if (reads_normal)
     {
         key.has_normal = layout.normal != kAbsent;
+        key.packed_normal = key.has_normal && layout.normal_packed;
         key.normalize_normals = key.has_normal && RenderStateValue(rs::kNormalizeNormals) != 0;
         if (!key.has_normal)
         {
@@ -553,10 +554,18 @@ void SetVertexAttributes(const VertexLayout& layout, uint32_t stride, size_t bas
             SetAttribute(index, size, type, normalized, stride, base + static_cast<size_t>(offset));
         }
     };
-    attribute(attr::kPosition, 0, static_cast<GLint>(layout.position_components), kGlFloat, false);
+    attribute(attr::kPosition, static_cast<int>(layout.position), static_cast<GLint>(layout.position_components),
+              kGlFloat, false);
     attribute(attr::kDiffuse, layout.diffuse, 4, kGlUnsignedByte, true);
     attribute(attr::kSpecular, layout.specular, 4, kGlUnsignedByte, true);
-    attribute(attr::kNormal, layout.normal, 3, kGlFloat, false);
+    if (layout.normal_packed)
+    {
+        attribute(attr::kNormal, layout.normal, 2, kGlUnsignedShort, false);  // unpacked in the shader
+    }
+    else
+    {
+        attribute(attr::kNormal, layout.normal, 3, kGlFloat, false);
+    }
     for (uint32_t i = 0; i < kMaxTexCoords; ++i)
     {
         attribute(attr::kTexCoord0 + i, layout.tex_offset[i], static_cast<GLint>(layout.tex_components[i]), kGlFloat,
@@ -594,6 +603,10 @@ void SetProgramAttributes(const vsh::Declaration& declaration, uint32_t stride, 
             type = kGlUnsignedByte;
             normalized = true;
             break;
+        case vsh::ElementKind::kNormPacked3:
+            // Two unsigned shorts, put back together in the shader.
+            SetAttribute(element.reg, 2, kGlUnsignedShort, false, stride, base + static_cast<size_t>(element.offset));
+            continue;
         }
         SetAttribute(element.reg, static_cast<int>(element.components), type, normalized, stride,
                      base + static_cast<size_t>(element.offset));
@@ -743,7 +756,7 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
                     indices.address, indices.base);
     }
     const PipelineState& pipeline = Pipeline();
-    const bool is_program = (pipeline.vertex_shader & fvf::kProgramHandle) != 0;
+    bool is_program = (pipeline.vertex_shader & fvf::kProgramHandle) != 0;
     const psh::Definition* pixel_shader = nullptr;
     if (pipeline.pixel_shader != 0)
     {
@@ -759,7 +772,23 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
     const ProgramShader* shader = nullptr;
     const vsh::Declaration* declaration = nullptr;  // the program's, or SetVertexShaderInput's handle's
     VertexLayout layout;
-    if (is_program)
+    // A shader created with a declaration and no microcode is fixed-function
+    // vertex processing over the declaration's registers.
+    const ProgramShader* fixed = is_program ? FindProgramShader(pipeline.vertex_shader) : nullptr;
+    if (fixed != nullptr && fixed->fixed_function)
+    {
+        std::string error;
+        if (!LayoutFromDeclaration(fixed->declaration, &layout, &error))
+        {
+            ReportOncePer("fixed-function declaration", pipeline.vertex_shader, [&] {
+                return Format("%s: fixed-function shader %08X is not drawn: %s", name, pipeline.vertex_shader,
+                              error.c_str());
+            });
+            return;
+        }
+        is_program = false;
+    }
+    else if (is_program)
     {
         shader = FindProgramShader(pipeline.vertex_shader);
         if (shader == nullptr || !shader->usable)
@@ -1282,6 +1311,13 @@ void DrawInlineVertices(uint32_t primitive, GuestAddress data, uint32_t bytes)
     source.base = data;
     source.stride = stride;
     Draw("push buffer", primitive, bytes / stride, IndexSource{}, source);
+}
+
+void DrawArrayElements(uint32_t primitive, GuestAddress indices, uint32_t count)
+{
+    IndexSource source_indices;
+    source_indices.address = indices;
+    Draw("push buffer elements", primitive, count, source_indices, StreamZero());
 }
 
 void RegisterDrawExports(runtime::HleRegistry& registry)

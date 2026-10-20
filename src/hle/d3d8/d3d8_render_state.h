@@ -167,6 +167,15 @@ uint32_t SlotFromLogical(const RenderStateLayout& layout, uint32_t logical);
 // past the end.
 uint32_t LogicalFromSlot(const RenderStateLayout& layout, uint32_t slot);
 
+// The NV2A (Kelvin) method a simple or pixel-shader state (logical IDs 0..81)
+// is pushed with: D3DDevice_SetRenderState_Simple(Method, Value) names its
+// state by it. The table is the XDK 4531 library's own (0x0012A590 in Crazy
+// Taxi 3; slot 57 / 0x354 agrees with 4134). Returns kNoRenderState for any
+// other method.
+uint32_t RenderStateFromNv2aMethod(uint32_t method);
+// NV097_SET_ZMIN_MAX_CONTROL: XDK 4531's added simple state (slot 82).
+constexpr uint32_t kMethodZMinMaxControl = 0x1D78;
+
 }  // namespace rexbox::hle::d3d8
 
 #endif  // REXBOX_HLE_D3D8_D3D8_RENDER_STATE_H

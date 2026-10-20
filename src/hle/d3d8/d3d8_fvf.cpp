@@ -1,5 +1,7 @@
 #include "d3d8_fvf.h"
 
+#include <algorithm>
+
 namespace rexbox::hle::d3d8
 {
 
@@ -67,6 +69,86 @@ bool DecodeFvf(uint32_t code, VertexLayout* layout)
     }
     result.stride = offset;
     *layout = result;
+    return true;
+}
+
+bool LayoutFromDeclaration(const vsh::Declaration& declaration, VertexLayout* layout, std::string* error)
+{
+    // D3DVSDE_* register numbers.
+    constexpr uint8_t kPositionRegister = 0;
+    constexpr uint8_t kNormalRegister = 2;
+    constexpr uint8_t kDiffuseRegister = 3;
+    constexpr uint8_t kSpecularRegister = 4;
+    constexpr uint8_t kTexCoord0Register = 9;
+    *layout = VertexLayout{};
+    if ((declaration.streams & ~1u) != 0)
+    {
+        *error = "the declaration reads streams other than 0";
+        return false;
+    }
+    layout->stride = declaration.stream_bytes[0];
+    bool position = false;
+    for (const vsh::VertexElement& element : declaration.elements)
+    {
+        const bool is_float = element.kind == vsh::ElementKind::kFloat;
+        const bool is_color = element.kind == vsh::ElementKind::kD3dColor;
+        if (element.reg == kPositionRegister)
+        {
+            if (!is_float || element.components < 3)
+            {
+                *error = "position type " + std::to_string(element.type) + " is not a float3/float4";
+                return false;
+            }
+            layout->position = element.offset;
+            layout->position_components = 3;
+            position = true;
+        }
+        else if (element.reg == kNormalRegister)
+        {
+            const bool packed = element.kind == vsh::ElementKind::kNormPacked3;
+            if (!packed && !(is_float && element.components == 3))
+            {
+                *error = "normal type " + std::to_string(element.type) + " is not float3 or NORMPACKED3";
+                return false;
+            }
+            layout->normal = element.offset;
+            layout->normal_packed = packed;
+        }
+        else if (element.reg == kDiffuseRegister || element.reg == kSpecularRegister)
+        {
+            if (!is_color)
+            {
+                *error = "color type " + std::to_string(element.type) + " is not D3DCOLOR";
+                return false;
+            }
+            (element.reg == kDiffuseRegister ? layout->diffuse : layout->specular) = element.offset;
+        }
+        else if (element.reg >= kTexCoord0Register && element.reg < kTexCoord0Register + kMaxTexCoords)
+        {
+            if (!is_float)
+            {
+                *error = "texture coordinate type " + std::to_string(element.type) + " is not float";
+                return false;
+            }
+            const uint32_t set = element.reg - kTexCoord0Register;
+            layout->tex_offset[set] = element.offset;
+            layout->tex_components[set] = element.components;
+            layout->tex_coords = std::max<uint32_t>(layout->tex_coords, set + 1);
+        }
+    }
+    // Sets the declaration skips stay at offset kAbsent with 2 components.
+    for (uint32_t set = 0; set < layout->tex_coords; ++set)
+    {
+        if (layout->tex_components[set] == 0)
+        {
+            layout->tex_components[set] = 2;
+        }
+    }
+    if (!position)
+    {
+        *error = "no position";
+        return false;
+    }
     return true;
 }
 

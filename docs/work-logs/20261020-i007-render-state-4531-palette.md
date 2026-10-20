@@ -29,9 +29,21 @@ P8 텍스처가 실제로 CT3에서 쓰였는지는 아직 보지 못했다(그 
 * 다음 정지(`D3D_MakeRequestedSpace_8`)의 원인은 XbSymbolDatabase가 4531에서 식별하지 못한 `D3DDevice_SetVertexBlendModelView(Count, pModelViews, pInverseModelViews, pProjectionViewport)`(CT3 `000F61E0`, stdcall 16바이트)였다. 이것이 lift된 채 하드웨어 푸시 버퍼(디바이스 `+0`/`+4`)를 쓰려 했다. reCT3가 `xdk_symbols_extra.json`으로 이름을 붙이고, rexbox HLE는 `SetModelView` 경로를 쓴다: 첫 모델뷰 = world × view, composite = 그 모델뷰 × 투영·뷰포트, Count 0이면 끈다. 여러 행렬의 블렌딩은 모델링하지 않고 한 번 보고한다.
 * 결과: reCT3는 120초 동안 멈추지 않고 1500프레임 넘게 진행해 "PRESS START" 화면까지 간다(frame 1200, 1500). 배경 3D는 아직 그려지지 않는다. 보고: `vertex-shader program … register type 22 is not handled yet`, `fog is not drawn yet`, 사전 변환 정점의 텍스처 좌표 생성·변환, 512x512 렌더 타깃 텍스처.
 
+## 이어서: 배경 3D
+
+| 원인 | 조치 | 근거 |
+|---|---|---|
+| 정점 셰이더 레지스터 타입 22 | `D3DVSDT_NORMPACKED3`(`0x16`): 파서, GLSL에서 unsigned short 둘을 32비트로 합쳐 부호 확장, 속성 2×`GL_UNSIGNED_SHORT`, 즉시 모드 패킹 | 공개 XDK 형식(**추정**), 화면으로 뒷받침 |
+| 마이크로코드 없는 셰이더(`no microcode`) | `LayoutFromDeclaration`: D3DVSDE 레지스터로 `VertexLayout`을 만들어 고정 기능 경로로 그린다(위치 오프셋, 압축 법선, 텍스처 좌표 빈칸). 고정 기능 키에 `packed_normal` | **확인됨**(그려짐) |
+| 4531에 `D3D_g_Stream` 미식별 | reCT3 프로파일이 `0x00104ED8`(`CDevice_SetStateVB`가 `+stream×12`로 읽음)을 바인딩. rexbox는 `D3D_g_Stream` 기준 4134 오프셋(IndexData, dirty flags)을 4134 배치일 때만 쓴다 | **확인됨** |
+| 푸시 버퍼 `0x1800`/`0x1808` | `ARRAY_ELEMENT16/32`를 모아 현재 스트림 0으로 인덱스 그리기(`DrawArrayElements`). 정점 배열은 `SetVertexShaderInput`의 스트림 | **확인됨**(타이틀 `000AAD20`) |
+| 상태가 기본값 그대로(화면 전체를 덮는 그림자 사각형이 블렌드 꺼짐·스텐실 ALWAYS) | 4531 `SetRenderState_Simple`은 슬롯에 쓰지 않는다. NV2A 메서드 → 상태 표(라이브러리 `0x0012A590`, kb §7)로 HLE가 슬롯에 저장한다. `0x1D78`는 4531의 슬롯 82 | **확인됨** |
+
+결과: d3d8 probe 201개(182 → 201), CTest 5/5. reCT3 프레임 1900·2100에 **어트랙트 데모의 3D 장면**(택시, 운전자, 밤의 도시, 미러볼)이 그려진다. 남은 보고: `fog is not drawn yet`, 여러 모델뷰의 블렌딩(첫 행렬만 씀).
+
 ## 다음
 
-* 정점 셰이더 레지스터 타입 22, 포그, 사전 변환 정점의 텍스처 좌표 생성(#7).
+* 포그, 정점 블렌딩(`SetVertexBlendModelView`의 2개 이상 행렬), 사전 변환 정점의 텍스처 좌표 생성(#7).
 * `D3D_g_Stream`이 없는 4531에서 `SetStreamSource`/`DrawVertices` 경로가 쓰이면 스트림 전역의 위치를 찾아야 한다.
 
 ---
@@ -46,4 +58,6 @@ Verification: the Win32 x86 Debug build (reCT3 tree) has no errors; the probes r
 
 Then: XDK 4531's `D3DDevice_Suspend` (CT3 `000F9330`) only calls `CDevice_SetStateVB(0)` (**confirmed**), flushing deferred state into the push buffer for its one caller, the title's push-buffer draw (`000A44C0`, then `BeginPush`); draws here read the state when they happen, so it is `AcceptNone`; `D3DDevice_Resume` is absent from CT3 and its signature cannot be checked, so it was not added. The next stop (`D3D_MakeRequestedSpace_8`) came from `D3DDevice_SetVertexBlendModelView(Count, pModelViews, pInverseModelViews, pProjectionViewport)` (CT3 `000F61E0`, stdcall 16 bytes), which XbSymbolDatabase misses in 4531 and which, lifted, wrote the hardware push buffer (device `+0`/`+4`); reCT3 names it in `xdk_symbols_extra.json` and the rexbox HLE goes through `SetModelView`'s path (the first model view as world × view, the composite as that model view × projection-viewport, Count 0 turning it off; blending between matrices is not modelled and reported once). Result: reCT3 runs 120 s without a stop past 1500 frames to the PRESS START screen (frames 1200, 1500), its 3D background not drawn yet; reports: `vertex-shader program … register type 22 is not handled yet`, `fog is not drawn yet`, texture-coordinate generation/transform with pretransformed vertices, a 512x512 render-target texture.
 
-Next: vertex-shader register type 22, fog, texture-coordinate generation with pretransformed vertices (#7); if 4531 uses the `SetStreamSource`/`DrawVertices` path without `D3D_g_Stream`, the stream globals must be located.
+Then, the 3D background: vertex-shader register type 22 is `D3DVSDT_NORMPACKED3` (`0x16`; parser, GLSL rebuilding the DWORD from two unsigned shorts and sign-extending each field, attributes as 2 × `GL_UNSIGNED_SHORT`, immediate packing; the format **inferred** from public XDK documents, borne out by the picture); a shader with no microcode is drawn on the fixed-function path through `LayoutFromDeclaration` (a `VertexLayout` from the D3DVSDE registers: position offset, packed normal, gaps in the texture sets; `packed_normal` in the fixed-function key); 4531 has no identified `D3D_g_Stream`, so the reCT3 profile binds `0x00104ED8` (read by `CDevice_SetStateVB` at `+stream×12`) and rexbox uses the 4134 offsets from `D3D_g_Stream` (IndexData, dirty flags) only for a 4134 layout; push-buffer `0x1800`/`0x1808` (`ARRAY_ELEMENT16/32`) are gathered and drawn indexed from the current stream 0 (`DrawArrayElements`; the arrays are `SetVertexShaderInput`'s streams, **confirmed** from the title's `000AAD20`); and states stayed at their defaults (a full-screen shadow quad covered the picture with blending off and stencil ALWAYS) because 4531's `SetRenderState_Simple` writes no slot, so the HLE now stores it from the NV2A method through the library's table (`0x0012A590`, kb §7; `0x1D78` is 4531's slot 82). Result: the d3d8 probe at 201 checks (182 → 201), CTest 5/5, and reCT3 frames 1900 and 2100 show **the attract demo's 3D scene** (taxi, driver, night city, mirror ball); still reported: `fog is not drawn yet` and blending between several model views (the first is used).
+
+Next: fog, vertex blending (two or more matrices of `SetVertexBlendModelView`), texture-coordinate generation with pretransformed vertices (#7); if 4531 uses the `SetStreamSource`/`DrawVertices` path without `D3D_g_Stream`, the stream globals must be located.

@@ -68,11 +68,31 @@ void D3DDevice_SetRenderState_ZBias()
 }
 
 // void __fastcall D3DDevice_SetRenderState_Simple(DWORD Method, DWORD Value)
-// The title's inline already stored the D3D__RenderState slot, which drawing
-// reads; Method and Value only feed the original's push buffer.
+// Method is the NV2A push-buffer header of the state (count in bits 18..28).
+// An XDK 4134 title's inline stored the D3D__RenderState slot before the
+// call; an XDK 4531 title (Crazy Taxi 3) does not, its library only pushing
+// the pair, so the slot drawing reads is stored here from the method (the
+// same value when the inline already did).
 void D3DDevice_SetRenderState_Simple()
 {
     HleCall call;
+    const uint32_t method = call.Ecx() & 0x1FFC;
+    const uint32_t state = RenderStateFromNv2aMethod(method);
+    if (state != kNoRenderState)
+    {
+        SetRenderStateValue(state, call.Edx());
+    }
+    else if (method == kMethodZMinMaxControl && CurrentRenderStateLayout().deferred_first > kLogicalDeferredFirst)
+    {
+        SetRenderStateSlot(kLogicalDeferredFirst, call.Edx());  // the added simple state
+    }
+    else
+    {
+        ReportOncePer("simple render state method", method, [&] {
+            return Format("SetRenderState_Simple: method %04X (value %08X) names no render state", method,
+                          call.Edx());
+        });
+    }
     call.Return(kD3dOk, 0);
 }
 

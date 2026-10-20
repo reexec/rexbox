@@ -611,7 +611,7 @@ void CheckVertexPrograms()
     vsh::ReadProgram(bytes.data(), bytes.size(), &program, &error);
 
     uint32_t used = 0;
-    const std::string glsl = vsh::TranslateToGlsl(program, 1u << 3, false, &used);
+    const std::string glsl = vsh::TranslateToGlsl(program, 1u << 3, 0, false, &used);
     Expect(used == 1u, "the program reads v0 only");
     Expect(Contains(glsl, "layout(location = 0) in vec4 v0;"), "v0 is attribute 0");
     Expect(Contains(glsl, "vec4 m = vec4(dot(A, B));") && Contains(glsl, "R0.x = m.x;"), "dp4 writes R0.x");
@@ -620,7 +620,7 @@ void CheckVertexPrograms()
     Expect(Contains(glsl, "R1.x = i.x;") && !Contains(glsl, "R7.x = i.x;"), "a paired ILU writes R1");
     Expect(Contains(glsl, "vec4(rcc(C.x))"), "rcc");
     Expect(Contains(glsl, "(oPos.xyz - offset) / scale * oPos.w"), "the epilogue is undone");
-    Expect(vsh::TranslateToGlsl(program, 0, true, &used).rfind("#version 300 es", 0) == 0, "GLES variant");
+    Expect(vsh::TranslateToGlsl(program, 0, 0, true, &used).rfind("#version 300 es", 0) == 0, "GLES variant");
 
     // The epilogue and its undoing round-trip through the viewport constants.
     float scale[4];
@@ -651,8 +651,11 @@ void CheckVertexPrograms()
     Expect(vsh::ParseDeclaration(color, &declaration, &error) && declaration.bgra_inputs == (1u << 3) &&
                declaration.elements[1].offset == 12 && declaration.streams == 2,
            "D3DCOLOR register, skip of two DWORDs, stream 1");
-    Expect(!vsh::ParseDeclaration({0x20000000, 0x40160000, 0xFFFFFFFF}, &declaration, &error),
-           "NORMPACKED3 is refused for now");
+    Expect(vsh::ParseDeclaration({0x20000000, 0x40160000, 0xFFFFFFFF}, &declaration, &error) &&
+               declaration.packed_inputs == 1u && declaration.stream_bytes[0] == 4,
+           "NORMPACKED3 is one DWORD on its register");
+    Expect(!vsh::ParseDeclaration({0x20000000, 0x40260000, 0xFFFFFFFF}, &declaration, &error),
+           "a NORMPACKED3 with two values is refused");
     Expect(!vsh::ParseDeclaration({0x20000000, 0x40320000}, &declaration, &error), "a declaration needs an end");
 }
 
@@ -804,6 +807,44 @@ void CheckPaletted()
     ExpectTexel(rgba.data() + 12, 0, 0, 0, 0, "P8 index past the palette reads 0");
 }
 
+// XDK 4531 vertex input: D3DVSDT_NORMPACKED3, declaration-only shaders as
+// fixed-function layouts, and the NV2A methods of SetRenderState_Simple.
+void CheckXdk4531VertexInput()
+{
+    // D3DVSD_STREAM(0); v0 FLOAT3; v2 NORMPACKED3; v3 D3DCOLOR; v9 FLOAT2; END.
+    const std::vector<uint32_t> tokens = {0x20000000, 0x40320000, 0x40160002, 0x40400003, 0x40220009, 0xFFFFFFFF};
+    vsh::Declaration declaration;
+    std::string error;
+    Expect(vsh::ParseDeclaration(tokens, &declaration, &error), "a declaration with NORMPACKED3 parses: " + error);
+    ExpectEqual(declaration.packed_inputs, 1u << 2, "NORMPACKED3 marks its register");
+    ExpectEqual(declaration.stream_bytes[0], 28, "NORMPACKED3 takes one DWORD (12 + 4 + 4 + 8 bytes)");
+
+    VertexLayout layout;
+    Expect(LayoutFromDeclaration(declaration, &layout, &error), "the declaration maps to a fixed-function layout");
+    ExpectEqual(layout.stride, 28, "layout stride");
+    ExpectEqual(static_cast<uint32_t>(layout.normal), 12, "normal at 12");
+    Expect(layout.normal_packed, "the normal is packed");
+    ExpectEqual(static_cast<uint32_t>(layout.diffuse), 16, "diffuse at 16");
+    ExpectEqual(static_cast<uint32_t>(layout.tex_offset[0]), 20, "texture coordinates 0 at 20");
+    ExpectEqual(layout.tex_components[0], 2, "two texture coordinates");
+
+    FixedFunctionKey key;
+    key.has_normal = true;
+    key.packed_normal = true;
+    key.lighting = true;
+    const std::string vs = GenerateFixedFunctionVertexShader(key, false);
+    Expect(Contains(vs, "in vec2 a_normal_packed") && Contains(vs, "np << 21u"),
+           "a packed normal is unpacked in the fixed-function shader");
+
+    ExpectEqual(RenderStateFromNv2aMethod(0x354), rs::kZFunc, "method 0x354 is ZFUNC");
+    ExpectEqual(RenderStateFromNv2aMethod(0x304), rs::kAlphaBlendEnable, "method 0x304 is ALPHABLENDENABLE");
+    ExpectEqual(RenderStateFromNv2aMethod(0x364), rs::kStencilFunc, "method 0x364 is STENCILFUNC");
+    ExpectEqual(RenderStateFromNv2aMethod(0x338), rs::kSolidOffsetEnable, "method 0x338 is SOLIDOFFSETENABLE");
+    ExpectEqual(RenderStateFromNv2aMethod(0x260), 0, "method 0x260 is pixel-shader state 0");
+    ExpectEqual(RenderStateFromNv2aMethod(kMethodZMinMaxControl), kNoRenderState, "4531's added state has no 4134 ID");
+    ExpectEqual(RenderStateFromNv2aMethod(0x1234), kNoRenderState, "an unrelated method names no state");
+}
+
 }  // namespace
 
 int main()
@@ -821,6 +862,7 @@ int main()
     CheckPixelShaders();
     CheckRenderStateLayout();
     CheckPaletted();
+    CheckXdk4531VertexInput();
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

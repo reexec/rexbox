@@ -19,6 +19,9 @@ struct ProgramShader
     vsh::Declaration declaration;
     vsh::Program program;
     bool usable = false;  // both parsed; else `error` says why
+    // The declaration parsed and there is no microcode: fixed-function
+    // vertex processing reading the declaration's registers.
+    bool fixed_function = false;
     std::string error;
     uint64_t hash = 0;    // of the microcode and the declaration's D3DCOLOR inputs (the GL program key)
 };

@@ -127,6 +127,7 @@ struct FixedFunctionKey
     bool has_specular = false;
     uint8_t tex_coords = 0;
     uint8_t tex_components[4] = {};
+    bool packed_normal = false;  // the normal arrives as a NORMPACKED3 DWORD (two unsigned shorts)
 
     struct Stage
     {

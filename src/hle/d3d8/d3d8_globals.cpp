@@ -165,25 +165,42 @@ void SetStream(uint32_t stream, GuestAddress vertex_buffer, uint32_t stride)
     }
 }
 
+namespace
+{
+
+// A global the XDK 4134 library keeps at a fixed offset from D3D_g_Stream
+// (measured there). Another library build (one whose render-state layout
+// differs, such as 4531) does not keep them there, so the offset is used
+// only for a 4134-shaped library; 0 otherwise.
+GuestAddress StreamRelative(uint32_t offset)
+{
+    const Addresses& addresses = Resolve();
+    const RenderStateLayout& layout = addresses.layout;
+    const bool layout_4134 =
+        layout.deferred_first == kLogicalDeferredFirst && layout.complex_first == kLogicalComplexFirst;
+    return addresses.stream != 0 && layout_4134 ? addresses.stream + offset : 0;
+}
+
+}  // namespace
+
 GuestAddress IndexData()
 {
-    const GuestAddress base = Resolve().stream;
-    return base != 0 ? Memory().Read32(base + globals::kIndexDataOffset) : 0;
+    const GuestAddress slot = StreamRelative(globals::kIndexDataOffset);
+    return slot != 0 ? Memory().Read32(slot) : 0;
 }
 
 void SetIndexData(GuestAddress data)
 {
-    if (const GuestAddress base = Resolve().stream)
+    if (const GuestAddress slot = StreamRelative(globals::kIndexDataOffset))
     {
-        Memory().Write32(base + globals::kIndexDataOffset, data);
+        Memory().Write32(slot, data);
     }
 }
 
 void OrDirtyFlags(uint32_t bits)
 {
-    if (const GuestAddress base = Resolve().stream)
+    if (const GuestAddress flags = StreamRelative(globals::kDirtyFlagsOffset))
     {
-        const GuestAddress flags = base + globals::kDirtyFlagsOffset;
         Memory().Write32(flags, Memory().Read32(flags) | bits);
     }
 }

@@ -16,6 +16,8 @@ namespace
 // NV2A (Kelvin) methods the interpreter understands.
 constexpr uint32_t kMethodBeginEnd = 0x17FC;     // NV097_SET_BEGIN_END: primitive, 0 ends
 constexpr uint32_t kMethodInlineArray = 0x1818;  // NV097_INLINE_ARRAY: vertex DWORDs
+constexpr uint32_t kMethodArrayElement16 = 0x1800;  // NV097_ARRAY_ELEMENT16: two 16-bit indices
+constexpr uint32_t kMethodArrayElement32 = 0x1808;  // NV097_ARRAY_ELEMENT32: one 32-bit index
 
 // Push-buffer header fields.
 constexpr uint32_t kHeaderMethodMask = 0x1FFC;
@@ -36,8 +38,11 @@ struct PushState
     uint32_t buffer_bytes = 0;
     GuestAddress staging = 0;
     uint32_t staging_bytes = 0;
+    GuestAddress index_staging = 0;
+    uint32_t index_staging_bytes = 0;
     uint32_t primitive = 0;
     std::vector<uint32_t> vertices;
+    std::vector<uint16_t> indices;  // ARRAY_ELEMENT16/32 into the current vertex arrays
 };
 
 PushState g_push;
@@ -68,6 +73,15 @@ bool Reserve(GuestAddress* block, uint32_t* capacity, uint32_t bytes)
 
 void EndPrimitive()
 {
+    if (g_push.primitive != 0 && !g_push.indices.empty())
+    {
+        const uint32_t bytes = static_cast<uint32_t>(g_push.indices.size() * 2);
+        if (Reserve(&g_push.index_staging, &g_push.index_staging_bytes, bytes))
+        {
+            std::memcpy(Memory().Translate(g_push.index_staging), g_push.indices.data(), bytes);
+            DrawArrayElements(g_push.primitive, g_push.index_staging, static_cast<uint32_t>(g_push.indices.size()));
+        }
+    }
     if (g_push.primitive != 0 && !g_push.vertices.empty())
     {
         const uint32_t bytes = static_cast<uint32_t>(g_push.vertices.size() * 4);
@@ -79,6 +93,7 @@ void EndPrimitive()
     }
     g_push.primitive = 0;
     g_push.vertices.clear();
+    g_push.indices.clear();
 }
 
 void Method(uint32_t method, uint32_t value)
@@ -90,6 +105,7 @@ void Method(uint32_t method, uint32_t value)
         {
             g_push.primitive = value;
             g_push.vertices.clear();
+            g_push.indices.clear();
         }
         else
         {
@@ -98,6 +114,20 @@ void Method(uint32_t method, uint32_t value)
         break;
     case kMethodInlineArray:
         g_push.vertices.push_back(value);
+        break;
+    case kMethodArrayElement16:
+        g_push.indices.push_back(static_cast<uint16_t>(value));
+        g_push.indices.push_back(static_cast<uint16_t>(value >> 16));
+        break;
+    case kMethodArrayElement32:
+        if (value > 0xFFFF)
+        {
+            ReportOncePer("push buffer index", 0, [&] {
+                return Format("push buffer ARRAY_ELEMENT32 index %08X is past 16 bits; skipped", value);
+            });
+            break;
+        }
+        g_push.indices.push_back(static_cast<uint16_t>(value));
         break;
     default:
         ReportOncePer("push buffer method", method, [&] {

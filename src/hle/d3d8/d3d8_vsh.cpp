@@ -440,6 +440,10 @@ bool ParseDeclaration(const std::vector<uint32_t>& tokens, Declaration* declarat
                     element.kind = ElementKind::kD3dColor;
                     bytes = 4;
                     break;
+                case 6:
+                    element.kind = ElementKind::kNormPacked3;
+                    bytes = 4u * count;
+                    break;
                 default:
                     *error = "register type " + Number(element.type) + " is not handled yet";
                     return false;
@@ -453,10 +457,21 @@ bool ParseDeclaration(const std::vector<uint32_t>& tokens, Declaration* declarat
                     *error = "register v" + Number(element.reg) + " type " + Number(element.type) + " is invalid";
                     return false;
                 }
-                element.components = element.kind == ElementKind::kD3dColor ? 4 : count;
+                if (element.kind == ElementKind::kNormPacked3 && count != 1)
+                {
+                    *error = "register v" + Number(element.reg) + " type " + Number(element.type) + " is invalid";
+                    return false;
+                }
+                element.components = element.kind == ElementKind::kD3dColor      ? 4
+                                     : element.kind == ElementKind::kNormPacked3 ? 3
+                                                                                 : count;
                 if (element.kind == ElementKind::kD3dColor)
                 {
                     declaration->bgra_inputs |= 1u << element.reg;
+                }
+                if (element.kind == ElementKind::kNormPacked3)
+                {
+                    declaration->packed_inputs |= 1u << element.reg;
                 }
                 declaration->stream_bytes[stream] = static_cast<uint16_t>(declaration->stream_bytes[stream] + bytes);
                 declaration->elements.push_back(element);
@@ -485,7 +500,8 @@ void ViewportConstants(uint32_t x, uint32_t y, uint32_t width, uint32_t height, 
     offset[3] = 0.0f;
 }
 
-std::string TranslateToGlsl(const Program& program, uint32_t bgra_inputs, bool gles, uint32_t* used_inputs)
+std::string TranslateToGlsl(const Program& program, uint32_t bgra_inputs, uint32_t packed_inputs, bool gles,
+                            uint32_t* used_inputs)
 {
     *used_inputs = 0;
     std::string body;
@@ -553,12 +569,25 @@ std::string TranslateToGlsl(const Program& program, uint32_t bgra_inputs, bool g
     {
         if (*used_inputs & (1u << i))
         {
-            // A D3DCOLOR arrives as B, G, R, A bytes.
+            // A D3DCOLOR arrives as B, G, R, A bytes; a NORMPACKED3 as the low
+            // and high halves of its DWORD.
             const bool bgra = (bgra_inputs & (1u << i)) != 0;
-            text += "layout(location = " + Number(i) + ") in vec4 " + (bgra ? "a" : "v") + Number(i) + ";\n";
+            const bool packed = (packed_inputs & (1u << i)) != 0;
+            text += "layout(location = " + Number(i) + ") in vec4 " + (bgra || packed ? "a" : "v") + Number(i) + ";\n";
             if (bgra)
             {
                 inputs_fixup += "    vec4 v" + Number(i) + " = a" + Number(i) + ".zyxw;\n";
+            }
+            if (packed)
+            {
+                const std::string a = "a" + Number(i);
+                const std::string p = "p" + Number(i);
+                inputs_fixup += "    uint " + p + " = uint(" + a + ".x) | (uint(" + a + ".y) << 16u);\n";
+                // Sign-extend each field by shifting it to the top of an int.
+                inputs_fixup += "    vec4 v" + Number(i) + " = vec4(" +
+                                "max(float(int(" + p + " << 21u) >> 21) / 1023.0, -1.0), " +
+                                "max(float(int(" + p + " << 10u) >> 21) / 1023.0, -1.0), " +
+                                "max(float(int(" + p + ") >> 22) / 511.0, -1.0), 1.0);\n";
             }
         }
     }

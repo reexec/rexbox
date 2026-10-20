@@ -241,6 +241,10 @@ std::string FixedFunctionKey::Serialize() const
                   tex_components[2], tex_components[3], stage_coords ? 1 : 0, has_normal ? 1 : 0,
                   normalize_normals ? 1 : 0, specular_enable ? 1 : 0, alpha_func);
     text = buffer;
+    if (packed_normal)
+    {
+        text += ";np";
+    }
     if (lighting)
     {
         std::snprintf(buffer, sizeof(buffer), ";l%d%u%u%u%u:", local_viewer ? 1 : 0, material_source[0],
@@ -276,7 +280,8 @@ uint64_t FixedFunctionKey::Hash() const
     uint64_t hash = 1469598103934665603ull;
     hash = HashMix(hash, (pretransformed ? 1u : 0u) | (has_diffuse ? 2u : 0u) | (has_specular ? 4u : 0u) |
                              (specular_enable ? 8u : 0u) | (stage_coords ? 16u : 0u) | (has_normal ? 32u : 0u) |
-                             (normalize_normals ? 64u : 0u) | (static_cast<uint64_t>(tex_coords) << 8));
+                             (normalize_normals ? 64u : 0u) | (packed_normal ? 128u : 0u) |
+                             (static_cast<uint64_t>(tex_coords) << 8));
     for (const uint8_t components : tex_components)
     {
         hash = HashMix(hash, components);
@@ -351,7 +356,13 @@ std::string GenerateFixedFunctionVertexShader(const FixedFunctionKey& key, bool 
     {
         text += "layout(location = " + Number(attr::kTexCoord0 + i) + ") in vec4 a_tex" + Number(i) + ";\n";
     }
-    if (key.has_normal)
+    if (key.has_normal && key.packed_normal)
+    {
+        // NORMPACKED3: the DWORD's halves; unpacked into a_normal in main().
+        text += "layout(location = " + Number(attr::kNormal) + ") in vec2 a_normal_packed;\n";
+        text += "vec3 a_normal;\n";
+    }
+    else if (key.has_normal)
     {
         text += "layout(location = " + Number(attr::kNormal) + ") in vec3 a_normal;\n";
     }
@@ -414,6 +425,14 @@ std::string GenerateFixedFunctionVertexShader(const FixedFunctionKey& key, bool 
         }
     }
     text += "void main()\n{\n";
+    if (key.has_normal && key.packed_normal)
+    {
+        // Signed X:11 Y:11 Z:10, each field sign-extended from the top of an int.
+        text += "    uint np = uint(a_normal_packed.x) | (uint(a_normal_packed.y) << 16u);\n"
+                "    a_normal = vec3(max(float(int(np << 21u) >> 21) / 1023.0, -1.0),\n"
+                "                    max(float(int(np << 10u) >> 21) / 1023.0, -1.0),\n"
+                "                    max(float(int(np) >> 22) / 511.0, -1.0));\n";
+    }
     if (key.pretransformed)
     {
         // Screen pixels (top-left origin) and 1/w; keep w for perspective-correct interpolation.
