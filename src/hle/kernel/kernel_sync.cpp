@@ -411,11 +411,6 @@ void NtReleaseMutant()
 
 // --- Timer ---------------------------------------------------------------
 
-// KTIMER: header (0x10), DueTime (+0x10, 8 bytes), TimerListEntry (+0x18),
-// Dpc (+0x20), Period (+0x24).
-constexpr uint32_t kTimerDueTime = 0x10;
-constexpr uint32_t kTimerPeriod = 0x24;
-
 // VOID KeInitializeTimerEx(PKTIMER Timer, TIMER_TYPE Type)
 void KeInitializeTimerEx()
 {
@@ -431,27 +426,7 @@ void KeInitializeTimerEx()
     call.Return(0, 2);
 }
 
-// BOOLEAN KeSetTimer(PKTIMER Timer, LARGE_INTEGER DueTime, PKDPC Dpc)
-//
-// The timer is armed but never fires: no DPC delivery exists yet. Logged so a
-// title that depends on it is visible.
-void KeSetTimer()
-{
-    HleCall call;
-    const GuestAddress timer = call.Arg(0);
-    Memory().Write32(timer + kTimerDueTime, call.Arg(1));
-    Memory().Write32(timer + kTimerDueTime + 4, call.Arg(2));
-    Memory().Write32(timer + kTimerPeriod, 0);
-    TraceOnce("KeSetTimer", "armed; timers do not fire yet");
-    call.Return(0, 4);
-}
-
-// BOOLEAN KeCancelTimer(PKTIMER Timer)
-void KeCancelTimer()
-{
-    HleCall call;
-    call.Return(0, 1);
-}
+// KeSetTimer, KeSetTimerEx and KeCancelTimer: kernel_timer.cpp.
 
 // --- Waits ---------------------------------------------------------------
 
@@ -465,6 +440,31 @@ void KeWaitForSingleObject()
     const uint32_t status =
         WaitAndDeliver("KeWaitForSingleObject", objects, false, deadline, AlertableThread(call.Arg(2), call.Arg(3)));
     HleCall().Return(status, 5);
+}
+
+// NTSTATUS KeWaitForMultipleObjects(ULONG Count, PVOID Object[], WAIT_TYPE WaitType,
+//     KWAIT_REASON WaitReason, KPROCESSOR_MODE WaitMode, BOOLEAN Alertable, PLARGE_INTEGER Timeout,
+//     PKWAIT_BLOCK WaitBlockArray)
+// The objects themselves, not handles; the wait blocks are not needed here.
+void KeWaitForMultipleObjects()
+{
+    HleCall call;
+    const uint32_t count = call.Arg(0);
+    const GuestAddress array = call.Arg(1);
+    const bool wait_all = call.Arg(2) == 0;  // WaitAll = 0, WaitAny = 1
+    if (count == 0 || count > kMaximumWaitObjects || array == 0)
+    {
+        call.Return(kStatusInvalidParameter, 8);
+        return;
+    }
+    std::vector<GuestAddress> objects;
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        objects.push_back(Memory().Read32(array + i * 4));
+    }
+    const uint32_t status = WaitAndDeliver("KeWaitForMultipleObjects", objects, wait_all,
+                                           DeadlineFromTimeout(call.Arg(6)), AlertableThread(call.Arg(4), call.Arg(5)));
+    HleCall().Return(status, 8);
 }
 
 void WaitForHandle(const char* what, int stack_args, uint32_t handle, GuestAddress timeout, KernelThread* apcs)
@@ -616,8 +616,7 @@ void RegisterSyncExports(runtime::HleRegistry& registry)
     registry.AddExport("kernel", "NtCreateMutant", &NtCreateMutant);
     registry.AddExport("kernel", "NtReleaseMutant", &NtReleaseMutant);
     registry.AddExport("kernel", "KeInitializeTimerEx", &KeInitializeTimerEx);
-    registry.AddExport("kernel", "KeSetTimer", &KeSetTimer);
-    registry.AddExport("kernel", "KeCancelTimer", &KeCancelTimer);
+    registry.AddExport("kernel", "KeWaitForMultipleObjects", &KeWaitForMultipleObjects);
     registry.AddExport("kernel", "KeWaitForSingleObject", &KeWaitForSingleObject);
     registry.AddExport("kernel", "NtWaitForSingleObject", &NtWaitForSingleObject);
     registry.AddExport("kernel", "NtWaitForSingleObjectEx", &NtWaitForSingleObjectEx);

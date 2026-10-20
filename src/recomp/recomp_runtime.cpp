@@ -202,6 +202,7 @@ void RecompExecutor::ThreadMain(void* raw)
         case platform::GuardedOutcome::kFault:
             report.reason = StopReason::kFault;
             report.fault_code = guarded.fault_code;
+            report.host_exception_address = guarded.exception_address;
             report.host_access_address = guarded.access_address;
             report.access_is_write = guarded.access_is_write;
             if (g_memory != nullptr)

@@ -1,5 +1,9 @@
 // Xbox D3D8 (XDK 4134) state numbering: D3DRENDERSTATETYPE slots of
 // D3D__RenderState and D3DTEXTURESTAGESTATETYPE slots of D3D__TextureState.
+// The rs:: numbers are logical IDs: a title's library may place the render
+// states elsewhere (XDK 4531 adds slot 82 and moves the deferred and complex
+// blocks up by one), and RenderStateLayout turns IDs into the title's slots
+// (docs/design/20261020-i007-render-state-4531-palette.md).
 // Each block notes its evidence (docs/kb/xbox-d3d8-api.md section 7):
 //   confirmed - the slot a lifted original setter writes, or a slot whose
 //               value equals what the title passes with a known NV2A method
@@ -136,6 +140,41 @@ constexpr uint32_t kBorderColor = 29;
 constexpr uint32_t kColorKeyColor = 30;
 }  // namespace tss
 
+// Where a title's library keeps the render-state blocks, as D3D__RenderState
+// slots. The simple block always starts at slot 0 with 4134's order; slots
+// between 4134's deferred start (82) and the title's are states 4134 lacks.
+struct RenderStateLayout
+{
+    uint32_t deferred_first = 82;
+    uint32_t complex_first = 117;
+};
+
+constexpr uint32_t kLogicalDeferredFirst = 82;
+constexpr uint32_t kLogicalComplexFirst = 117;
+constexpr uint32_t kComplexStateCount = 29;  // 4134 and 4531
+constexpr uint32_t kLogicalStateCount = kLogicalComplexFirst + kComplexStateCount;
+constexpr uint32_t kNoRenderState = 0xFFFFFFFFu;
+
+// The layout from the addresses of D3D_g_RenderState, D3D_g_DeferredRenderState
+// and D3D_g_ComplexRenderState; 4134's when the block addresses are missing or
+// inconsistent.
+RenderStateLayout DeriveRenderStateLayout(uint32_t render_state, uint32_t deferred, uint32_t complex);
+// Slots the layout covers.
+uint32_t RenderStateSlotCount(const RenderStateLayout& layout);
+// A logical ID's slot, or kNoRenderState.
+uint32_t SlotFromLogical(const RenderStateLayout& layout, uint32_t logical);
+// A slot's logical ID, or kNoRenderState for a state 4134 lacks or a slot
+// past the end.
+uint32_t LogicalFromSlot(const RenderStateLayout& layout, uint32_t slot);
+
+// The NV2A (Kelvin) method a simple or pixel-shader state (logical IDs 0..81)
+// is pushed with: D3DDevice_SetRenderState_Simple(Method, Value) names its
+// state by it. The table is the XDK 4531 library's own (0x0012A590 in Crazy
+// Taxi 3; slot 57 / 0x354 agrees with 4134). Returns kNoRenderState for any
+// other method.
+uint32_t RenderStateFromNv2aMethod(uint32_t method);
+// NV097_SET_ZMIN_MAX_CONTROL: XDK 4531's added simple state (slot 82).
+constexpr uint32_t kMethodZMinMaxControl = 0x1D78;
 
 }  // namespace rexbox::hle::d3d8
 

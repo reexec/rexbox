@@ -1,6 +1,7 @@
 #include "d3d8_globals.h"
 
 #include "d3d8_internal.h"
+#include "d3d8_render_state.h"
 
 #include <atomic>
 
@@ -15,6 +16,8 @@ constexpr const char* kDeviceVariable = "D3D_g_pDevice";
 constexpr const char* kStreamVariable = "D3D_g_Stream";
 constexpr const char* kRenderStateVariable = "D3D_g_RenderState";
 constexpr const char* kTextureStateVariable = "D3D_g_DeferredTextureState";
+constexpr const char* kDeferredRenderStateVariable = "D3D_g_DeferredRenderState";
+constexpr const char* kComplexRenderStateVariable = "D3D_g_ComplexRenderState";
 
 struct Addresses
 {
@@ -22,9 +25,11 @@ struct Addresses
     GuestAddress stream = 0;
     GuestAddress render_state = 0;
     GuestAddress texture_state = 0;
+    RenderStateLayout layout;  // from the bound block variables, else 4134's
 };
 
-// Looked up on first use after the title bound its variables; kept once found.
+// Looked up on first use after the title bound its variables; kept once the
+// render state is found.
 const Addresses& Resolve()
 {
     static Addresses addresses;
@@ -39,7 +44,14 @@ const Addresses& Resolve()
             found.stream = registry->FindVariable(kStreamVariable);
             found.render_state = registry->FindVariable(kRenderStateVariable);
             found.texture_state = registry->FindVariable(kTextureStateVariable);
-            if (found.device != 0 && found.stream != 0 && found.render_state != 0 && found.texture_state != 0)
+            found.layout = DeriveRenderStateLayout(found.render_state,
+                                                   registry->FindVariable(kDeferredRenderStateVariable),
+                                                   registry->FindVariable(kComplexRenderStateVariable));
+            // The profile binds every identified variable at once, so a bound
+            // render state means binding is over; a variable the title's
+            // library build does not identify (XDK 4531 has no D3D_g_Stream)
+            // stays 0 and its accessors read 0 and drop writes.
+            if (found.render_state != 0)
             {
                 addresses = found;
                 resolved.store(true, std::memory_order_release);
@@ -70,18 +82,40 @@ void SetDeviceObject(GuestAddress device)
     }
 }
 
+const RenderStateLayout& CurrentRenderStateLayout()
+{
+    return Resolve().layout;
+}
+
+uint32_t RenderStateSlotValue(uint32_t slot)
+{
+    const Addresses& addresses = Resolve();
+    return addresses.render_state != 0 && slot < RenderStateSlotCount(addresses.layout)
+               ? Memory().Read32(addresses.render_state + slot * 4)
+               : 0;
+}
+
+void SetRenderStateSlot(uint32_t slot, uint32_t value)
+{
+    const Addresses& addresses = Resolve();
+    if (addresses.render_state != 0 && slot < RenderStateSlotCount(addresses.layout))
+    {
+        Memory().Write32(addresses.render_state + slot * 4, value);
+    }
+}
+
 uint32_t RenderStateValue(uint32_t state)
 {
-    const GuestAddress base = Resolve().render_state;
-    return base != 0 && state < globals::kRenderStateCount ? Memory().Read32(base + state * 4) : 0;
+    const uint32_t slot = SlotFromLogical(Resolve().layout, state);
+    return slot != kNoRenderState ? RenderStateSlotValue(slot) : 0;
 }
 
 void SetRenderStateValue(uint32_t state, uint32_t value)
 {
-    const GuestAddress base = Resolve().render_state;
-    if (base != 0 && state < globals::kRenderStateCount)
+    const uint32_t slot = SlotFromLogical(Resolve().layout, state);
+    if (slot != kNoRenderState)
     {
-        Memory().Write32(base + state * 4, value);
+        SetRenderStateSlot(slot, value);
     }
 }
 
@@ -131,25 +165,42 @@ void SetStream(uint32_t stream, GuestAddress vertex_buffer, uint32_t stride)
     }
 }
 
+namespace
+{
+
+// A global the XDK 4134 library keeps at a fixed offset from D3D_g_Stream
+// (measured there). Another library build (one whose render-state layout
+// differs, such as 4531) does not keep them there, so the offset is used
+// only for a 4134-shaped library; 0 otherwise.
+GuestAddress StreamRelative(uint32_t offset)
+{
+    const Addresses& addresses = Resolve();
+    const RenderStateLayout& layout = addresses.layout;
+    const bool layout_4134 =
+        layout.deferred_first == kLogicalDeferredFirst && layout.complex_first == kLogicalComplexFirst;
+    return addresses.stream != 0 && layout_4134 ? addresses.stream + offset : 0;
+}
+
+}  // namespace
+
 GuestAddress IndexData()
 {
-    const GuestAddress base = Resolve().stream;
-    return base != 0 ? Memory().Read32(base + globals::kIndexDataOffset) : 0;
+    const GuestAddress slot = StreamRelative(globals::kIndexDataOffset);
+    return slot != 0 ? Memory().Read32(slot) : 0;
 }
 
 void SetIndexData(GuestAddress data)
 {
-    if (const GuestAddress base = Resolve().stream)
+    if (const GuestAddress slot = StreamRelative(globals::kIndexDataOffset))
     {
-        Memory().Write32(base + globals::kIndexDataOffset, data);
+        Memory().Write32(slot, data);
     }
 }
 
 void OrDirtyFlags(uint32_t bits)
 {
-    if (const GuestAddress base = Resolve().stream)
+    if (const GuestAddress flags = StreamRelative(globals::kDirtyFlagsOffset))
     {
-        const GuestAddress flags = base + globals::kDirtyFlagsOffset;
         Memory().Write32(flags, Memory().Read32(flags) | bits);
     }
 }

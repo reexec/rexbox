@@ -62,14 +62,34 @@ struct Material
 
 constexpr uint32_t kMaxLights = 256;  // indices kept (inferred bound; the title uses few)
 
+// D3DSTREAM_INPUT of SetVertexShaderInput: {VertexBuffer, Stride, Offset}.
+constexpr uint32_t kMaxStreamInputs = 16;
+struct StreamInput
+{
+    runtime::GuestAddress vertex_buffer = 0;
+    uint32_t stride = 0;
+    uint32_t offset = 0;  // bytes into the buffer's data
+};
+
 struct PipelineState
 {
     std::array<runtime::GuestAddress, kMaxTextureStages> textures = {};  // bound texture headers
+    std::array<runtime::GuestAddress, kMaxTextureStages> palettes = {};  // SetPalette, for P8 textures
     std::array<std::array<float, 16>, kMaxTransforms> transforms = {};
     runtime::GuestAddress index_buffer = 0;
     uint32_t base_vertex_index = 0;
     uint32_t vertex_shader = 0;
     uint32_t pixel_shader = 0;
+    // SetVertexShaderInput: while non-zero, this handle's declaration and
+    // `inputs` replace the current shader's declaration and the streams.
+    uint32_t input_shader = 0;
+    std::array<StreamInput, kMaxStreamInputs> inputs = {};
+    // SetModelView: while set, `model_view` replaces world x view and
+    // `composite` (model view x projection x viewport) the clip transform.
+    bool model_view_set = false;
+    bool composite_set = false;
+    std::array<float, 16> model_view = {};
+    std::array<float, 16> composite = {};
     uint32_t shader_constant_mode = 0;
     float screen_space_offset_x = 0.0f;
     float screen_space_offset_y = 0.0f;
@@ -79,6 +99,10 @@ struct PipelineState
 };
 
 PipelineState& Pipeline();
+
+// A matrix producing the vertex-shader epilogue's screen coordinates (such as
+// SetModelView's composite) turned into one producing clip coordinates.
+std::array<float, 16> ScreenToClip(const std::array<float, 16>& screen);
 
 void RegisterStateExports(runtime::HleRegistry& registry);
 

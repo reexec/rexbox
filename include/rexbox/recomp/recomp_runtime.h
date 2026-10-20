@@ -72,6 +72,7 @@ struct ThreadReport
     const char* hle_library = nullptr; // kUnimplementedHle: the XDK library and symbol
     const char* hle_name = nullptr;
     uint32_t fault_code = 0;
+    uintptr_t host_exception_address = 0;  // kFault: the host instruction (the linker map names its lifted function)
     uintptr_t host_access_address = 0;
     bool access_is_write = false;
     // The faulting access as a guest address (host - base, modulo 2^32, which

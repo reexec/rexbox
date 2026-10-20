@@ -6,7 +6,10 @@
 #ifndef REXBOX_HLE_D3D8_D3D8_FVF_H
 #define REXBOX_HLE_D3D8_D3D8_FVF_H
 
+#include "d3d8_vsh.h"
+
 #include <cstdint>
+#include <string>
 
 namespace rexbox::hle::d3d8
 {
@@ -34,10 +37,12 @@ constexpr int kAbsent = -1;
 struct VertexLayout
 {
     uint32_t stride = 0;
+    uint32_t position = 0;           // byte offset (0 for an FVF)
     bool pretransformed = false;     // XYZRHW: screen x, y, z and 1/w
     uint32_t position_components = 0;  // 3, or 4 for XYZRHW
     uint32_t blend_weights = 0;      // XYZB1..4: floats after the position
     int normal = kAbsent;            // byte offsets, kAbsent when missing
+    bool normal_packed = false;      // the normal is a D3DVSDT_NORMPACKED3 DWORD
     int point_size = kAbsent;
     int diffuse = kAbsent;           // D3DCOLOR (B, G, R, A bytes)
     int specular = kAbsent;
@@ -49,6 +54,13 @@ struct VertexLayout
 // False when `code` is not a valid FVF (a program handle, no position, more
 // than kMaxTexCoords sets).
 bool DecodeFvf(uint32_t code, VertexLayout* layout);
+
+// The fixed-function layout of a vertex shader created with a declaration
+// and no microcode: registers by D3DVSDE meaning (0 position, 2 normal, 3
+// diffuse, 4 specular, 9..12 texture coordinates; blend weights, fog and
+// point size are not read). False, with the reason, for an element the
+// fixed-function path cannot take or a stream other than 0.
+bool LayoutFromDeclaration(const vsh::Declaration& declaration, VertexLayout* layout, std::string* error);
 
 }  // namespace rexbox::hle::d3d8
 

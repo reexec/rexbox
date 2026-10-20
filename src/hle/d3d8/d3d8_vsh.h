@@ -125,6 +125,10 @@ enum class ElementKind : uint8_t
     kShort,
     kNormByte,
     kD3dColor,
+    // D3DVSDT_NORMPACKED3: one DWORD, signed X:11 Y:11 Z:10 (bits 0-10, 11-21,
+    // 22-31), each scaled to -1..1; W is 1. GL has no such format: it reaches
+    // the shader as two unsigned shorts and is unpacked there.
+    kNormPacked3,
 };
 
 struct VertexElement
@@ -143,6 +147,7 @@ struct Declaration
     uint16_t stream_bytes[16] = {};  // the vertex size the declaration implies per stream
     uint32_t streams = 0;            // bit per stream used
     uint32_t bgra_inputs = 0;        // bit per register holding a D3DCOLOR
+    uint32_t packed_inputs = 0;      // bit per register holding a NORMPACKED3
 };
 
 // Reads D3DVSD tokens up to D3DVSD_END. False (with a reason) for a token or
@@ -152,12 +157,14 @@ bool ParseDeclaration(const std::vector<uint32_t>& tokens, Declaration* declarat
 // GLSL vertex shader for `program` ("#version 330 core", or "300 es" with
 // `gles`). Inputs are attributes v0..v15 at locations 0..15 (`used_inputs`
 // gets bit i where the program reads vi); a D3DCOLOR input (`bgra_inputs`)
-// is swizzled to R, G, B, A. Constants are the uniform array c[192]. Outputs
+// is swizzled to R, G, B, A; a NORMPACKED3 input (`packed_inputs`, two
+// unsigned shorts) is unpacked to X, Y, Z, 1. Constants are the uniform array c[192]. Outputs
 // feed the fixed-function fragment stage: v_diffuse, v_specular, v_tex0..3,
 // v_fog. The screen-space position the Xbox runtime's epilogue writes is
 // mapped back to clip space with the viewport constants c[58] (scale) and
 // c[59] (offset).
-std::string TranslateToGlsl(const Program& program, uint32_t bgra_inputs, bool gles, uint32_t* used_inputs);
+std::string TranslateToGlsl(const Program& program, uint32_t bgra_inputs, uint32_t packed_inputs, bool gles,
+                            uint32_t* used_inputs);
 
 // The viewport constants the epilogue reads, for a viewport at (x, y) of
 // width x height pixels: c[58] = (w/2, -h/2, 1, 1), c[59] = (x + w/2,

@@ -118,6 +118,20 @@ void D3DSurface_GetDesc()
     call.Return(HeaderLevelLayout(call.Arg(0), 0).width, 2);
 }
 
+// DWORD D3DBaseTexture_GetLevelCount(D3DBaseTexture* pThis): the mip level
+// count from the header's Format field (bits 16..19), which is where the
+// original reads it.
+void D3DBaseTexture_GetLevelCount()
+{
+    HleCall call;
+    const GuestAddress texture = call.Arg(0);
+    runtime::GuestMemory& memory = Memory();
+    const uint32_t levels = texture != 0 && memory.IsValid(texture, header::kSize)
+                                ? (memory.Read32(texture + header::kFormat) >> header::kFormatMipLevelsShift) & 0xF
+                                : 0;
+    call.Return(levels, 1);
+}
+
 }  // namespace
 
 uint32_t FormatBitsPerPixel(uint32_t format)
@@ -357,6 +371,7 @@ void RegisterResourceExports(runtime::HleRegistry& registry)
     registry.AddExport("d3d8", "D3DResource_AddRef", &D3DResource_AddRef);
     registry.AddExport("d3d8", "D3DResource_Release", &D3DResource_Release);
     registry.AddExport("d3d8", "D3DResource_GetType", &D3DResource_GetType);
+    registry.AddExport("d3d8", "D3DBaseTexture_GetLevelCount", &D3DBaseTexture_GetLevelCount);
     registry.AddExport("d3d8", "D3DSurface_GetDesc", &D3DSurface_GetDesc);
 }
 

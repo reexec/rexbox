@@ -388,4 +388,27 @@ bool DecodeTextureLevel(uint32_t format, const uint8_t* source, uint32_t width, 
     return true;
 }
 
+void DecodePalettedLevel(const uint8_t* source, uint32_t width, uint32_t height, uint32_t depth,
+                         const uint32_t* palette, uint32_t entries, std::vector<uint8_t>* rgba)
+{
+    rgba->assign(static_cast<size_t>(width) * height * depth * 4, 0);
+    uint8_t* out = rgba->data();
+    for (uint32_t z = 0; z < depth; ++z)
+    {
+        for (uint32_t y = 0; y < height; ++y)
+        {
+            for (uint32_t x = 0; x < width; ++x)
+            {
+                const uint8_t index = source[SwizzleOffset(x, y, z, width, height, depth, 1)];
+                const uint32_t color = index < entries ? palette[index] : 0;
+                uint8_t* texel = out + ((static_cast<size_t>(z) * height + y) * width + x) * 4;
+                texel[0] = static_cast<uint8_t>(color >> 16);
+                texel[1] = static_cast<uint8_t>(color >> 8);
+                texel[2] = static_cast<uint8_t>(color);
+                texel[3] = static_cast<uint8_t>(color >> 24);
+            }
+        }
+    }
+}
+
 }  // namespace rexbox::hle::d3d8

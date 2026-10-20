@@ -415,7 +415,9 @@ const VertexProgramGl* GetVertexProgram(const ProgramShader& shader, const Fixed
     VertexProgramGl& entry = g_vertex_programs[key];
     const bool es = GlIsEs();
     uint32_t used_inputs = 0;
-    const std::string vertex = vsh::TranslateToGlsl(shader.program, shader.declaration.bgra_inputs, es, &used_inputs);
+    const vsh::Declaration& declaration = shader.declaration;
+    const std::string vertex =
+        vsh::TranslateToGlsl(shader.program, declaration.bgra_inputs, declaration.packed_inputs, es, &used_inputs);
     const GLuint program = Link(vertex, GenerateFixedFunctionFragmentShader(fragment_key, es), id);
     if (program == 0)
     {
@@ -447,7 +449,9 @@ const VertexProgramGl* GetVertexPixelProgram(const ProgramShader& shader, const 
     VertexProgramGl& entry = g_vertex_pixel_programs[key];
     const bool es = GlIsEs();
     uint32_t used_inputs = 0;
-    const std::string vertex = vsh::TranslateToGlsl(shader.program, shader.declaration.bgra_inputs, es, &used_inputs);
+    const vsh::Declaration& declaration = shader.declaration;
+    const std::string vertex =
+        vsh::TranslateToGlsl(shader.program, declaration.bgra_inputs, declaration.packed_inputs, es, &used_inputs);
     std::string unsupported;
     const std::string fragment = psh::GenerateFragmentShader(pixel_key, es, &unsupported);
     if (!unsupported.empty())

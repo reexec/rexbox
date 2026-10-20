@@ -5,7 +5,10 @@
 #include "d3d8_resource.h"
 #include "d3d8_shader.h"
 #include "d3d8_trace.h"
+#include "d3d8_vsh.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace rexbox::hle::d3d8
@@ -65,30 +68,52 @@ void D3DDevice_SetRenderState_ZBias()
 }
 
 // void __fastcall D3DDevice_SetRenderState_Simple(DWORD Method, DWORD Value)
-// The title's inline already stored the D3D__RenderState slot, which drawing
-// reads; Method and Value only feed the original's push buffer.
+// Method is the NV2A push-buffer header of the state (count in bits 18..28).
+// An XDK 4134 title's inline stored the D3D__RenderState slot before the
+// call; an XDK 4531 title (Crazy Taxi 3) does not, its library only pushing
+// the pair, so the slot drawing reads is stored here from the method (the
+// same value when the inline already did).
 void D3DDevice_SetRenderState_Simple()
 {
     HleCall call;
+    const uint32_t method = call.Ecx() & 0x1FFC;
+    const uint32_t state = RenderStateFromNv2aMethod(method);
+    if (state != kNoRenderState)
+    {
+        SetRenderStateValue(state, call.Edx());
+    }
+    else if (method == kMethodZMinMaxControl && CurrentRenderStateLayout().deferred_first > kLogicalDeferredFirst)
+    {
+        SetRenderStateSlot(kLogicalDeferredFirst, call.Edx());  // the added simple state
+    }
+    else
+    {
+        ReportOncePer("simple render state method", method, [&] {
+            return Format("SetRenderState_Simple: method %04X (value %08X) names no render state", method,
+                          call.Edx());
+        });
+    }
     call.Return(kD3dOk, 0);
 }
 
 // void D3DDevice_SetRenderStateNotInline(D3DRENDERSTATETYPE State, DWORD Value)
 // The original stores the slot and, for the states below the deferred block,
 // pushes the NV2A method from its own table; those states reach the GL
-// backend through the slot (d3d8_draw reads them).
+// backend through the slot (d3d8_draw reads them). State is the title's own
+// numbering (a slot), not a logical ID.
 void D3DDevice_SetRenderStateNotInline()
 {
     HleCall call;
+    const uint32_t slot = call.Arg(0);
     // Complex states go through their setters in the original; ZBias is the
     // only one whose setter writes more than its own slot.
-    if (call.Arg(0) == rs::kZBias)
+    if (LogicalFromSlot(CurrentRenderStateLayout(), slot) == rs::kZBias)
     {
         ApplyZBias(call.Arg(1));
     }
     else
     {
-        SetRenderStateValue(call.Arg(0), call.Arg(1));
+        SetRenderStateSlot(slot, call.Arg(1));
     }
     call.Return(kD3dOk, 2);
 }
@@ -170,6 +195,135 @@ void D3DDevice_SetTransform()
     call.Return(kD3dOk, 2);
 }
 
+// The viewport mapping of the runtime's vertex-shader epilogue (c[58] scale,
+// c[59] offset; vsh::ViewportConstants) applied to the columns of a matrix
+// whose products are clip coordinates, or undone (`inverse`).
+std::array<float, 16> MapViewport(const std::array<float, 16>& m, bool inverse)
+{
+    const Viewport& vp = State().viewport;
+    float scale[4] = {};
+    float offset[4] = {};
+    vsh::ViewportConstants(vp.x, vp.y, vp.width, vp.height, scale, offset);
+    std::array<float, 16> result = {};
+    for (uint32_t row = 0; row < 4; ++row)
+    {
+        const float w = m[row * 4 + 3];
+        for (uint32_t column = 0; column < 3; ++column)
+        {
+            const float value = m[row * 4 + column];
+            result[row * 4 + column] =
+                inverse ? (value - w * offset[column]) / scale[column] : value * scale[column] + w * offset[column];
+        }
+        result[row * 4 + 3] = w;
+    }
+    return result;
+}
+
+std::array<float, 16> MultiplyMatrices(const std::array<float, 16>& a, const std::array<float, 16>& b)
+{
+    std::array<float, 16> result = {};
+    for (uint32_t row = 0; row < 4; ++row)
+    {
+        for (uint32_t column = 0; column < 4; ++column)
+        {
+            float sum = 0.0f;
+            for (uint32_t k = 0; k < 4; ++k)
+            {
+                sum += a[row * 4 + k] * b[k * 4 + column];
+            }
+            result[row * 4 + column] = sum;
+        }
+    }
+    return result;
+}
+
+// void D3DDevice_GetProjectionViewportMatrix(D3DMATRIX* pProjectionViewport)
+// The projection times the viewport mapping into the epilogue's screen
+// coordinates, so a title's own screen-space math agrees with the runtime.
+void D3DDevice_GetProjectionViewportMatrix()
+{
+    HleCall call;
+    const GuestAddress out = call.Arg(0);
+    if (out != 0)
+    {
+        const std::array<float, 16> m = MapViewport(g_pipeline.transforms[ts::kProjection], false);
+        std::memcpy(Memory().Translate(out), m.data(), 64);
+    }
+    call.Return(kD3dOk, 1);
+}
+
+// void D3DDevice_SetModelView(const D3DMATRIX* pModelView, const D3DMATRIX* pInverseModelView,
+//     const D3DMATRIX* pComposite)
+// Fixed-function vertices then go through these instead of world x view and
+// the projection; a null pModelView returns to them. pComposite is model view
+// x projection x viewport (inferred; the first call traces how far it is from
+// the product this runtime would form). The inverse is derived where needed.
+void D3DDevice_SetModelView()
+{
+    HleCall call;
+    runtime::GuestMemory& memory = Memory();
+    const GuestAddress model_view = call.Arg(0);
+    const GuestAddress composite = call.Arg(2);
+    g_pipeline.model_view_set = model_view != 0;
+    g_pipeline.composite_set = model_view != 0 && composite != 0;
+    if (g_pipeline.model_view_set)
+    {
+        std::memcpy(g_pipeline.model_view.data(), memory.Translate(model_view), 64);
+    }
+    if (g_pipeline.composite_set)
+    {
+        std::memcpy(g_pipeline.composite.data(), memory.Translate(composite), 64);
+        const std::array<float, 16> formed =
+            MapViewport(MultiplyMatrices(g_pipeline.model_view, g_pipeline.transforms[ts::kProjection]), false);
+        float largest = 0.0f;
+        for (uint32_t i = 0; i < 16; ++i)
+        {
+            largest = std::max(largest, std::fabs(formed[i] - g_pipeline.composite[i]));
+        }
+        TraceOnce("set model view",
+                  Format("SetModelView: composite row 3 (%g, %g, %g, %g); model view x projection x viewport differs "
+                         "by at most %g",
+                         g_pipeline.composite[12], g_pipeline.composite[13], g_pipeline.composite[14],
+                         g_pipeline.composite[15], largest));
+    }
+    call.Return(kD3dOk, 3);
+}
+
+// void D3DDevice_SetVertexBlendModelView(UINT Count, const D3DMATRIX* pModelViews,
+//     const D3DMATRIX* pInverseModelViews, const D3DMATRIX* pProjectionViewport)
+// (stdcall, 16 bytes.) SetModelView for vertex blending: Count model views and
+// the projection-viewport matrix (what GetProjectionViewportMatrix returns);
+// Count 0 returns to world x view and the projection. Blending between the
+// matrices is not modelled: the first model view transforms every vertex.
+void D3DDevice_SetVertexBlendModelView()
+{
+    HleCall call;
+    runtime::GuestMemory& memory = Memory();
+    const uint32_t count = call.Arg(0);
+    const GuestAddress model_views = call.Arg(1);
+    const GuestAddress projection_viewport = call.Arg(3);
+    if (count == 0 || model_views == 0 || projection_viewport == 0)
+    {
+        g_pipeline.model_view_set = false;
+        g_pipeline.composite_set = false;
+        call.Return(kD3dOk, 4);
+        return;
+    }
+    if (count > 1)
+    {
+        TraceOnce("vertex blend model views",
+                  Format("SetVertexBlendModelView: %u model views; blending is not modelled, the first is used",
+                         count));
+    }
+    std::memcpy(g_pipeline.model_view.data(), memory.Translate(model_views), 64);
+    std::array<float, 16> projection = {};
+    std::memcpy(projection.data(), memory.Translate(projection_viewport), 64);
+    g_pipeline.composite = MultiplyMatrices(g_pipeline.model_view, projection);
+    g_pipeline.model_view_set = true;
+    g_pipeline.composite_set = true;
+    call.Return(kD3dOk, 4);
+}
+
 // void D3DDevice_SetStreamSource(UINT StreamNumber, D3DVertexBuffer* pStreamData, UINT Stride)
 void D3DDevice_SetStreamSource()
 {
@@ -189,6 +343,71 @@ void D3DDevice_SetStreamSource()
         }
         SetStream(stream, buffer, call.Arg(2));
     }
+    call.Return(kD3dOk, 3);
+}
+
+// void D3DDevice_SetPalette(DWORD Stage, D3DPalette* pPalette)
+// The palette P8 textures on that stage expand through; the binding is
+// counted like a texture's.
+void D3DDevice_SetPalette()
+{
+    HleCall call;
+    const uint32_t stage = call.Arg(0);
+    const GuestAddress palette = call.Arg(1);
+    if (stage < kMaxTextureStages)
+    {
+        if (palette != 0)
+        {
+            AddResourceBinding(palette);
+        }
+        const GuestAddress previous = g_pipeline.palettes[stage];
+        g_pipeline.palettes[stage] = palette;
+        if (previous != 0)
+        {
+            ReleaseResourceBinding(previous, DevicePushFence());
+        }
+        ++g_pipeline.texture_generation;
+    }
+    call.Return(kD3dOk, 2);
+}
+
+// void D3DDevice_SetVertexShaderInput(DWORD Handle, UINT StreamCount, const D3DSTREAM_INPUT* pStreamInputs)
+// While Handle is non-zero, its declaration and these streams replace the
+// current shader's declaration and SetStreamSource's streams (draws read
+// stream 0); Handle 0 or no inputs turns the override off.
+void D3DDevice_SetVertexShaderInput()
+{
+    HleCall call;
+    runtime::GuestMemory& memory = Memory();
+    const uint32_t handle = call.Arg(1) != 0 && call.Arg(2) != 0 ? call.Arg(0) : 0;
+    const uint32_t count = std::min<uint32_t>(call.Arg(1), kMaxStreamInputs);
+    std::array<StreamInput, kMaxStreamInputs> inputs = {};
+    if (handle != 0)
+    {
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            const GuestAddress entry = call.Arg(2) + i * 12;
+            inputs[i].vertex_buffer = memory.Read32(entry);
+            inputs[i].stride = memory.Read32(entry + 4);
+            inputs[i].offset = memory.Read32(entry + 8);
+            if (inputs[i].vertex_buffer != 0)
+            {
+                AddResourceBinding(inputs[i].vertex_buffer);
+            }
+        }
+        TraceOnce(Format("vertex shader input %08X %u", handle, count),
+                  Format("SetVertexShaderInput: handle %08X, %u stream(s), stream 0 buffer %08X stride %u offset %u",
+                         handle, count, inputs[0].vertex_buffer, inputs[0].stride, inputs[0].offset));
+    }
+    for (const StreamInput& previous : g_pipeline.inputs)
+    {
+        if (previous.vertex_buffer != 0)
+        {
+            ReleaseResourceBinding(previous.vertex_buffer, DevicePushFence());
+        }
+    }
+    g_pipeline.input_shader = handle;
+    g_pipeline.inputs = inputs;
     call.Return(kD3dOk, 3);
 }
 
@@ -332,6 +551,11 @@ PipelineState& Pipeline()
     return g_pipeline;
 }
 
+std::array<float, 16> ScreenToClip(const std::array<float, 16>& screen)
+{
+    return MapViewport(screen, true);
+}
+
 void RegisterStateExports(runtime::HleRegistry& registry)
 {
     struct ComplexSetter
@@ -384,7 +608,12 @@ void RegisterStateExports(runtime::HleRegistry& registry)
     registry.AddExport("d3d8", "D3DDevice_SetTextureState_BumpEnv", &D3DDevice_SetTextureState_BumpEnv);
     registry.AddExport("d3d8", "D3DDevice_SetTexture", &D3DDevice_SetTexture);
     registry.AddExport("d3d8", "D3DDevice_SetTransform", &D3DDevice_SetTransform);
+    registry.AddExport("d3d8", "D3DDevice_GetProjectionViewportMatrix", &D3DDevice_GetProjectionViewportMatrix);
+    registry.AddExport("d3d8", "D3DDevice_SetModelView", &D3DDevice_SetModelView);
+    registry.AddExport("d3d8", "D3DDevice_SetVertexBlendModelView", &D3DDevice_SetVertexBlendModelView);
     registry.AddExport("d3d8", "D3DDevice_SetStreamSource", &D3DDevice_SetStreamSource);
+    registry.AddExport("d3d8", "D3DDevice_SetVertexShaderInput", &D3DDevice_SetVertexShaderInput);
+    registry.AddExport("d3d8", "D3DDevice_SetPalette", &D3DDevice_SetPalette);
     registry.AddExport("d3d8", "D3DDevice_SetIndices", &D3DDevice_SetIndices);
     registry.AddExport("d3d8", "D3DDevice_SetVertexShader", &D3DDevice_SetVertexShader);
     registry.AddExport("d3d8", "D3DDevice_SetPixelShader", &D3DDevice_SetPixelShader);

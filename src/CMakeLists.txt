@@ -59,6 +59,7 @@ add_library(rexbox_hle_kernel STATIC
     hle/kernel/kernel_rtl.cpp
     hle/kernel/kernel_state.cpp
     hle/kernel/kernel_sync.cpp
+    hle/kernel/kernel_timer.cpp
     hle/kernel/kernel_thread.cpp
     hle/kernel/kernel_vfs.cpp
 )
@@ -111,6 +112,7 @@ add_library(rexbox_hle_d3d8 STATIC
     hle/d3d8/d3d8_psh.cpp
     hle/d3d8/d3d8_resource.cpp
     hle/d3d8/d3d8_state.cpp
+    hle/d3d8/d3d8_render_state.cpp
     hle/d3d8/d3d8_texture_format.cpp
     hle/d3d8/d3d8_trace.cpp
     hle/d3d8/d3d8_vblank.cpp
@@ -120,6 +122,7 @@ add_library(rexbox_hle_d3d8 STATIC
     hle/d3d8/d3d8_smaa.cpp
     hle/d3d8/d3d8_draw.cpp
     hle/d3d8/d3d8_draw_watch.cpp
+    hle/d3d8/d3d8_push.cpp
 )
 target_link_libraries(rexbox_hle_d3d8 PUBLIC rexbox_runtime)
 

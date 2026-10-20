@@ -38,7 +38,7 @@ struct TextureCacheUse
 TextureCacheUse TextureCacheBytes();
 
 // The GL texture for the header bound to a stage (uploaded as needed).
-BoundTexture ResolveTexture(GuestAddress header);
+BoundTexture ResolveTexture(GuestAddress header, GuestAddress palette = 0);
 
 // Binds `texture` to texture unit `stage` with the stage's sampler state.
 void BindStageTexture(uint32_t stage, const BoundTexture& texture);

@@ -216,6 +216,8 @@ uint32_t FramesFromBytes(const Buffer& buffer, uint32_t bytes);
 void UpdateGains(Buffer& buffer);
 // Reads a DSMIXBINS into the buffer (dsound_buffer.cpp).
 void ReadMixBins(Buffer& buffer, GuestAddress mix_bins);
+// Reads a WAVEFORMATEX and tells whether the mixer can decode it (dsound_device.cpp).
+bool ReadFormat(GuestAddress address, WaveFormat* format);
 // Mixes `frames` stereo frames into `samples` (added) and advances cursors.
 void MixLocked(float* samples, uint32_t frames);
 

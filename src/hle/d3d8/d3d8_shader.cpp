@@ -62,6 +62,7 @@ void PrepareProgram(VertexShader& shader)
     if (shader.function == 0 || !memory.IsValid(shader.function, 4))
     {
         program.error = "no microcode (fixed-function vertex processing)";
+        program.fixed_function = true;
         return;
     }
     const uint32_t header = memory.Read32(shader.function);
@@ -81,6 +82,7 @@ void PrepareProgram(VertexShader& shader)
         hash = Fnv1a(hash, words.data(), 16);
     }
     hash = Fnv1a(hash, &program.declaration.bgra_inputs, sizeof(program.declaration.bgra_inputs));
+    hash = Fnv1a(hash, &program.declaration.packed_inputs, sizeof(program.declaration.packed_inputs));
     program.hash = hash;
     program.usable = true;
 }

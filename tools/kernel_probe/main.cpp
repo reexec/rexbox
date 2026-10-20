@@ -430,7 +430,125 @@ void ProbeUserApc(const std::filesystem::path& game_directory)
     Call("NtClose", {file});
 }
 
+// The physical memory window (docs/design/20261020-i008-physical-window.md):
+// RAM written at its physical address reads back at 0x80000000 + P and
+// 0xF0000000 + P through Translate and through the generated code's own
+// arithmetic (base + guest address, wrapping at the pointer width).
+void ProbeGuestWindow()
+{
+    rexbox::runtime::GuestMemory window;
+    rexbox::runtime::GuestMemory::Options options;
+    options.physical_window = true;
+    if (!window.Initialize(rexbox::runtime::GuestMemory::kAddressSpaceSize, options))
+    {
+        Check(false, "guest memory with the physical window allocates");
+        return;
+    }
+    using GM = rexbox::runtime::GuestMemory;
+    const GuestAddress physical = 0x006E6000;
+    window.Write32(physical, 0x43543321);
+    Check(window.Read32(GM::kPhysicalWindow + physical) == 0x43543321, "the 0x80000000 window reads the RAM");
+    Check(window.Read32(GM::kWriteCombinedWindow + physical) == 0x43543321, "the 0xF0000000 window reads the RAM");
+    window.Write32(GM::kPhysicalWindow + physical, 0x11223344);
+    Check(window.Read32(physical) == 0x11223344, "a write through the window reaches the RAM");
+    // What XBOX_PTR computes: the guest address added to the base.
+    const auto generated = reinterpret_cast<volatile uint32_t*>(
+        reinterpret_cast<uintptr_t>(window.base()) + static_cast<uintptr_t>(GM::kPhysicalWindow + physical));
+    Check(*generated == 0x11223344, "generated-code arithmetic reaches the window");
+    *generated = 0x55667788;
+    Check(window.Read32(physical) == 0x55667788, "a generated-code write through the window reaches the RAM");
+    Check(window.IsValid(GM::kPhysicalWindow + physical, 4) && !window.IsValid(GM::kPhysicalWindow + GM::kRetailRamSize, 4) &&
+              !window.IsValid(0x90000000u, 4),
+          "IsValid accepts window addresses inside the RAM only");
+    Check(!window.TracksWrites(), "window memory reports no write tracking");
+}
+
 }  // namespace
+
+// Timers that fire, KeWaitForMultipleObjects and the DPC queue (design
+// i012). The probe runs no guest threads, so DPC routines are not run here.
+uint32_t Low(int64_t value)
+{
+    return static_cast<uint32_t>(value);
+}
+
+uint32_t High(int64_t value)
+{
+    return static_cast<uint32_t>(static_cast<uint64_t>(value) >> 32);
+}
+
+uint32_t SetTimerEx(GuestAddress timer, int64_t due, uint32_t period_ms)
+{
+    return Call("KeSetTimerEx", {timer, Low(due), High(due), period_ms, 0});
+}
+
+uint32_t WaitTimer(GuestAddress timer, int64_t ms)
+{
+    return Call("KeWaitForSingleObject", {timer, 0, 0, 0, Timeout(kScratch + 0x10, ms)});
+}
+
+void ProbeTimers()
+{
+    const GuestAddress timer = kScratch + 0x400;
+    const GuestAddress periodic = kScratch + 0x440;
+    const GuestAddress far_timer = kScratch + 0x480;
+    const GuestAddress dpc = kScratch + 0x4C0;
+    const int64_t kMs = 10000;  // 100 ns units
+
+    Call("KeInitializeTimerEx", {timer, 0});
+    Check(SetTimerEx(timer, -20 * kMs, 0) == 0, "KeSetTimerEx on an idle timer returns FALSE");
+    Check(WaitTimer(timer, 0) == kTimeout, "an armed timer is unsignalled before its due time");
+    const auto started = std::chrono::steady_clock::now();
+    Check(WaitTimer(timer, 1000) == 0, "a 20 ms relative timer ends a wait");
+    Check(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(15),
+          "the relative timer fired about 20 ms later");
+    Check(WaitTimer(timer, 0) == 0, "a notification timer stays signalled");
+
+    const int64_t second = -1000 * kMs;
+    Check(Call("KeSetTimer", {timer, Low(second), High(second), 0}) == 0,
+          "KeSetTimer after the timer fired returns FALSE");
+    Check(WaitTimer(timer, 0) == kTimeout, "setting a timer resets its signal");
+    Check(Call("KeSetTimer", {timer, Low(second), High(second), 0}) == 1, "KeSetTimer on an armed timer returns TRUE");
+    Check(Call("KeCancelTimer", {timer}) == 1, "KeCancelTimer on an armed timer returns TRUE");
+    Check(Call("KeCancelTimer", {timer}) == 0, "KeCancelTimer on an idle timer returns FALSE");
+
+    SetTimerEx(timer, 0, 0);
+    Check(WaitTimer(timer, 500) == 0, "a zero due time fires at once");
+
+    Call("KeQuerySystemTime", {kScratch + 0x20});
+    const uint64_t now = static_cast<uint64_t>(g_memory->Read32(kScratch + 0x20)) |
+                         (static_cast<uint64_t>(g_memory->Read32(kScratch + 0x24)) << 32);
+    SetTimerEx(timer, static_cast<int64_t>(now + 20 * kMs), 0);
+    Check(WaitTimer(timer, 0) == kTimeout && WaitTimer(timer, 1000) == 0, "an absolute due time fires once reached");
+
+    Call("KeInitializeTimerEx", {periodic, 1});
+    SetTimerEx(periodic, -10 * kMs, 10);
+    Check(WaitTimer(periodic, 1000) == 0 && WaitTimer(periodic, 1000) == 0,
+          "a periodic synchronization timer fires again after a wait resets it");
+    Call("KeCancelTimer", {periodic});
+
+    // KeWaitForMultipleObjects(Count, Object[], WaitType, WaitReason, WaitMode, Alertable, Timeout, WaitBlocks)
+    Call("KeInitializeTimerEx", {far_timer, 0});
+    SetTimerEx(far_timer, -60000 * kMs, 0);
+    SetTimerEx(timer, -20 * kMs, 0);
+    g_memory->Write32(kScratch + 0x30, far_timer);
+    g_memory->Write32(kScratch + 0x34, timer);
+    Check(Call("KeWaitForMultipleObjects", {2, kScratch + 0x30, 1, 6, 1, 0, Timeout(kScratch + 0x10, 1000), 0}) == 1,
+          "KeWaitForMultipleObjects wait-any returns the index of the timer that fired");
+    const uint32_t all =
+        Call("KeWaitForMultipleObjects", {2, kScratch + 0x30, 0, 6, 1, 0, Timeout(kScratch + 0x10, 0), 0});
+    Check(all == kTimeout, "KeWaitForMultipleObjects wait-all times out while one timer is unsignalled");
+    Call("KeCancelTimer", {far_timer});
+
+    Call("KeInitializeDpc", {dpc, 0x00123450, 0x55});
+    Check(Call("KeInsertQueueDpc", {dpc, 1, 2}) == 1, "KeInsertQueueDpc queues an idle DPC");
+    Check(Call("KeInsertQueueDpc", {dpc, 1, 2}) == 0, "KeInsertQueueDpc on a queued DPC returns FALSE");
+    Check(g_memory->Read32(dpc + 0x14) == 1 && g_memory->Read32(dpc + 0x18) == 2, "the system arguments are stored");
+    Check(Call("KeRemoveQueueDpc", {dpc}) == 1 && Call("KeRemoveQueueDpc", {dpc}) == 0,
+          "KeRemoveQueueDpc removes a queued DPC once");
+    Check(Call("KeInsertQueueDpc", {dpc, 3, 4}) == 1, "a removed DPC can be queued again");
+    Call("KeRemoveQueueDpc", {dpc});
+}
 
 int main()
 {
@@ -462,6 +580,8 @@ int main()
     ProbeGuestHeapRegions();
     ProbeDosDevicesRoot(scratch);
     ProbeUserApc(scratch);
+    ProbeGuestWindow();
+    ProbeTimers();
 
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);
     std::fflush(stdout);

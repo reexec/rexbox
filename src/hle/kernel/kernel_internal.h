@@ -188,6 +188,7 @@ void RegisterHalExports(runtime::HleRegistry& registry);
 void RegisterFileExports(runtime::HleRegistry& registry);
 void RegisterCryptoExports(runtime::HleRegistry& registry);
 void RegisterApcExports(runtime::HleRegistry& registry);
+void RegisterTimerExports(runtime::HleRegistry& registry);
 
 // The Win32 error code for an NTSTATUS (RtlNtStatusToDosError's table).
 uint32_t NtStatusToDosError(uint32_t status);
@@ -259,6 +260,14 @@ uint32_t DeliverUserApcs(KernelThread& thread);
 
 // Signals a thread object at exit (dispatcher lock taken inside).
 void SignalThreadExit(GuestAddress ethread, uint32_t exit_status);
+
+// Starts a kernel-owned guest thread at `function` (no arguments, no TLS).
+std::shared_ptr<KernelThread> StartKernelGuestThread(GuestAddress function, uint32_t stack_size, std::string* error);
+
+// The DPC thread starts at this reserved kernel ordinal's synthetic address,
+// bound to the internal export "rexbox_DpcLoop" when kernel imports are bound
+// (docs/design/20261020-i012-kernel-timers-dpc.md).
+constexpr uint32_t kDpcLoopOrdinal = 0x3FF;
 
 }  // namespace rexbox::hle::kernel
 

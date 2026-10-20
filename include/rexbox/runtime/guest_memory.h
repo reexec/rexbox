@@ -37,14 +37,49 @@ public:
     GuestMemory(const GuestMemory&) = delete;
     GuestMemory& operator=(const GuestMemory&) = delete;
 
-    // Reserves and commits `size` bytes covering guest addresses [0, size).
+    // The Xbox kernel maps physical RAM a second time at 0x80000000 (the
+    // contiguous window, cached) and at 0xF0000000 (write-combined), and a
+    // title may turn a resource's physical address into a pointer with
+    // `| 0x80000000`. With the window on, guest addresses in those two
+    // ranges reach the same bytes as the physical address below RAM, for the
+    // generated code (the platform maps the RAM pages again at those
+    // offsets from the base) and for the HLE (Translate and IsValid fold
+    // them). Memory with the window has no write tracking.
+    static constexpr GuestAddress kPhysicalWindow = 0x80000000u;
+    static constexpr GuestAddress kWriteCombinedWindow = 0xF0000000u;
+
+    struct Options
+    {
+        bool physical_window = false;
+    };
+
+    // Reserves and commits `size` bytes covering guest addresses [0, size),
+    // the first kRetailRamSize of them standing for physical RAM.
     bool Initialize(size_t size);
+    bool Initialize(size_t size, const Options& options);
     void Shutdown();
 
     bool IsValid(GuestAddress address, size_t length) const;
 
+    // The address below RAM a window address stands for; other addresses
+    // unchanged.
+    GuestAddress Fold(GuestAddress address) const
+    {
+        if (physical_window_ && address >= kPhysicalWindow)
+        {
+            const GuestAddress window = address >= kWriteCombinedWindow ? kWriteCombinedWindow : kPhysicalWindow;
+            if (address - window < kRetailRamSize)
+            {
+                return address - window;
+            }
+        }
+        return address;
+    }
+
     // Host pointer for a guest address. The caller must have checked range.
-    uint8_t* Translate(GuestAddress address) const { return base_ + address; }
+    uint8_t* Translate(GuestAddress address) const { return base_ + Fold(address); }
+
+    bool physical_window() const { return physical_window_; }
 
     // Little-endian scalar access; the caller must have checked the range.
     uint32_t Read32(GuestAddress address) const
@@ -81,6 +116,7 @@ public:
 
 private:
     uint8_t* base_ = nullptr;
+    bool physical_window_ = false;
     size_t size_ = 0;
 
     bool tracks_writes_ = false;

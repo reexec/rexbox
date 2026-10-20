@@ -43,6 +43,8 @@ constexpr uint32_t kTypeFixup = 0x00060000;
 constexpr uint32_t kIntRefCountMask = 0x00780000;
 constexpr uint32_t kIntRefCountOne = 0x00080000;  // one device binding (stream, indices, texture stage)
 constexpr uint32_t kD3dCreated = 0x01000000;
+// Palettes: D3DPALETTESIZE in bits 30..31 (0: 256 entries .. 3: 32).
+constexpr uint32_t kPaletteSizeShift = 30;
 
 // Format (the XGRAPHC bit field).
 constexpr uint32_t kFormatDmaMask = 0x00000003;  // XGSetSurfaceHeader writes 2 here
@@ -114,6 +116,7 @@ enum class ResourceKind
     kVolumeTexture,
     kVertexBuffer,
     kIndexBuffer,
+    kPalette,  // D3DDevice_CreatePalette
 };
 
 struct HostResource

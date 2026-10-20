@@ -9,10 +9,6 @@
 namespace rexbox::hle::dsound
 {
 
-namespace
-{
-
-// Reads a WAVEFORMATEX and tells whether the mixer can decode it.
 bool ReadFormat(GuestAddress address, WaveFormat* format)
 {
     runtime::GuestMemory& memory = Memory();
@@ -36,6 +32,9 @@ bool ReadFormat(GuestAddress address, WaveFormat* format)
     }
     return false;
 }
+
+namespace
+{
 
 // HRESULT DirectSoundCreate(LPGUID pguidDeviceId, LPDIRECTSOUND* ppDirectSound,
 //     LPUNKNOWN pUnkOuter)
@@ -146,19 +145,15 @@ void IDirectSound_GetSpeakerConfig()
     call.Return(kDsOk, 2);
 }
 
-// HRESULT IDirectSound_CreateSoundBuffer(LPDIRECTSOUND pThis, LPCDSBUFFERDESC pdsbd,
-//     LPDIRECTSOUNDBUFFER* ppBuffer, LPUNKNOWN pUnkOuter)
-void IDirectSound_CreateSoundBuffer()
+// Creates the buffer DSBUFFERDESC `desc` describes and writes it to `out`;
+// returns the HRESULT.
+uint32_t CreateSoundBuffer(GuestAddress desc, GuestAddress out)
 {
-    HleCall call;
-    const GuestAddress desc = call.Arg(1);
-    const GuestAddress out = call.Arg(2);
     DsoundState& state = State();
     std::lock_guard<std::mutex> lock(state.mutex);
     if (desc == 0 || out == 0)
     {
-        call.Return(kErrInvalidCall, 4);
-        return;
+        return kErrInvalidCall;
     }
     runtime::GuestMemory& memory = Memory();
     Buffer buffer;
@@ -182,8 +177,7 @@ void IDirectSound_CreateSoundBuffer()
     const GuestAddress object = AllocateGuest(kObjectBlockSize);
     if (object == 0)
     {
-        call.Return(kErrOutOfMemory, 4);
-        return;
+        return kErrOutOfMemory;
     }
     if (bytes != 0 && !submix)
     {
@@ -191,8 +185,7 @@ void IDirectSound_CreateSoundBuffer()
         if (buffer.data == 0)
         {
             Heap().Free(object);
-            call.Return(kErrOutOfMemory, 4);
-            return;
+            return kErrOutOfMemory;
         }
         buffer.bytes = bytes;
         buffer.owns_data = true;
@@ -218,7 +211,24 @@ void IDirectSound_CreateSoundBuffer()
     }
     state.buffers.emplace(object, buffer);
     memory.Write32(out, object);
-    call.Return(kDsOk, 4);
+    return kDsOk;
+}
+
+// HRESULT IDirectSound_CreateSoundBuffer(LPDIRECTSOUND pThis, LPCDSBUFFERDESC pdsbd,
+//     LPDIRECTSOUNDBUFFER* ppBuffer, LPUNKNOWN pUnkOuter), and CDirectSound_CreateSoundBuffer
+// (the same arguments; XDK 4531 titles call it).
+void IDirectSound_CreateSoundBuffer()
+{
+    HleCall call;
+    call.Return(CreateSoundBuffer(call.Arg(1), call.Arg(2)), 4);
+}
+
+// HRESULT DirectSoundCreateBuffer(LPCDSBUFFERDESC pdsbd, LPDIRECTSOUNDBUFFER* ppBuffer):
+// a buffer of the one DirectSound object without naming it.
+void DirectSoundCreateBuffer()
+{
+    HleCall call;
+    call.Return(CreateSoundBuffer(call.Arg(0), call.Arg(1)), 2);
 }
 
 }  // namespace
@@ -231,6 +241,8 @@ void RegisterDeviceExports(runtime::HleRegistry& registry)
     registry.AddExport("dsound", "IDirectSound_GetCaps", &IDirectSound_GetCaps);
     registry.AddExport("dsound", "IDirectSound_GetSpeakerConfig", &IDirectSound_GetSpeakerConfig);
     registry.AddExport("dsound", "IDirectSound_CreateSoundBuffer", &IDirectSound_CreateSoundBuffer);
+    registry.AddExport("dsound", "CDirectSound_CreateSoundBuffer", &IDirectSound_CreateSoundBuffer);
+    registry.AddExport("dsound", "DirectSoundCreateBuffer", &DirectSoundCreateBuffer);
     // Deferred 3D settings and the library's periodic work: nothing to do.
     registry.AddExport("dsound", "IDirectSound_CommitDeferredSettings", &AcceptSetting<1>);
     registry.AddExport("dsound", "DirectSoundDoWork", &AcceptSetting<0>);
@@ -243,6 +255,13 @@ void RegisterDeviceExports(runtime::HleRegistry& registry)
     registry.AddExport("dsound", "IDirectSound_SetRolloffFactor", &AcceptSetting<3>);
     registry.AddExport("dsound", "IDirectSound_SetVelocity", &AcceptSetting<5>);
     registry.AddExport("dsound", "IDirectSound_SetI3DL2Listener", &AcceptSetting<3>);
+    // HRESULT IDirectSound_SetMixBinHeadroom(LPDIRECTSOUND pThis, DWORD dwMixBin, DWORD dwHeadroom):
+    // headroom only scales the mixer's output; accepted (XDK 4531 titles call it).
+    registry.AddExport("dsound", "IDirectSound_SetMixBinHeadroom", &AcceptSetting<3>);
+    // void DirectSoundUseFullHRTF(void) / DirectSoundUseLightHRTF(void) (cdecl): the HRTF
+    // algorithm of 3D voices, which the mixer does not model; accepted.
+    registry.AddExport("dsound", "DirectSoundUseFullHRTF", &AcceptSetting<0>);
+    registry.AddExport("dsound", "DirectSoundUseLightHRTF", &AcceptSetting<0>);
 }
 
 }  // namespace rexbox::hle::dsound

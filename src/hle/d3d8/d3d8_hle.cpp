@@ -1,6 +1,7 @@
 #include "rexbox/hle/d3d8/d3d8_hle.h"
 
 #include "d3d8_internal.h"
+#include "d3d8_push.h"
 
 namespace rexbox::hle::d3d8
 {
@@ -30,6 +31,7 @@ void RegisterD3d8Hle(runtime::HleRegistry& registry)
     RegisterCreateExports(registry);
     RegisterShaderExports(registry);
     RegisterDrawExports(registry);
+    RegisterPushExports(registry);
     RegisterDeviceExports(registry);
 }
 

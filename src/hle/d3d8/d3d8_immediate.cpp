@@ -35,6 +35,18 @@ void PutShort(uint8_t* out, float value)
     std::memcpy(out, &v, 2);
 }
 
+// A D3DVSDT_NORMPACKED3 DWORD: signed X:11 Y:11 Z:10 from -1..1.
+void PutNormPacked3(uint8_t* out, const float* value)
+{
+    const auto field = [](float v, float scale, uint32_t bits) {
+        const float clamped = std::min(1.0f, std::max(-1.0f, v));
+        return static_cast<uint32_t>(static_cast<int32_t>(std::lround(clamped * scale))) & ((1u << bits) - 1u);
+    };
+    const uint32_t packed =
+        field(value[0], 1023.0f, 11) | (field(value[1], 1023.0f, 11) << 11) | (field(value[2], 511.0f, 10) << 22);
+    std::memcpy(out, &packed, 4);
+}
+
 }  // namespace
 
 ImmediateBatch::ImmediateBatch()
@@ -84,12 +96,16 @@ std::vector<uint8_t> PackFvfVertices(const VertexLayout& layout, const std::vect
     uint8_t* out = bytes.data();
     for (const ImmediateVertex& vertex : vertices)
     {
-        PutFloats(out, vertex.reg[vsde::kPosition], layout.position_components);
+        PutFloats(out + layout.position, vertex.reg[vsde::kPosition], layout.position_components);
         if (layout.blend_weights != 0)
         {
             PutFloats(out + 4 * layout.position_components, vertex.reg[vsde::kBlendWeight], layout.blend_weights);
         }
-        if (layout.normal != kAbsent)
+        if (layout.normal != kAbsent && layout.normal_packed)
+        {
+            PutNormPacked3(out + layout.normal, vertex.reg[vsde::kNormal]);
+        }
+        else if (layout.normal != kAbsent)
         {
             PutFloats(out + layout.normal, vertex.reg[vsde::kNormal], 3);
         }
@@ -107,7 +123,10 @@ std::vector<uint8_t> PackFvfVertices(const VertexLayout& layout, const std::vect
         }
         for (uint32_t t = 0; t < layout.tex_coords; ++t)
         {
-            PutFloats(out + layout.tex_offset[t], vertex.reg[vsde::kTexCoord0 + t], layout.tex_components[t]);
+            if (layout.tex_offset[t] != kAbsent)
+            {
+                PutFloats(out + layout.tex_offset[t], vertex.reg[vsde::kTexCoord0 + t], layout.tex_components[t]);
+            }
         }
         out += layout.stride;
     }
@@ -155,6 +174,9 @@ std::vector<uint8_t> PackDeclarationVertices(const vsh::Declaration& declaration
                 break;
             case vsh::ElementKind::kD3dColor:
                 PutColor(at, value);
+                break;
+            case vsh::ElementKind::kNormPacked3:
+                PutNormPacked3(at, value);
                 break;
             }
         }

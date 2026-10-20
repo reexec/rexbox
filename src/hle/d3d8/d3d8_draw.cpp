@@ -27,6 +27,7 @@
 #include "d3d8_render_state.h"
 #include "d3d8_resource.h"
 #include "d3d8_psh.h"
+#include "d3d8_push.h"
 #include "d3d8_shader.h"
 #include "d3d8_state.h"
 #include "d3d8_trace.h"
@@ -240,7 +241,7 @@ FixedFunctionKey BuildKey(const VertexLayout& layout, BoundTexture textures[kFix
                 ReportOncePer("op", op, [op] { return Format("texture operation %u is drawn as SELECTARG1", op); });
             }
         }
-        textures[s] = ResolveTexture(pipeline.textures[s]);
+        textures[s] = ResolveTexture(pipeline.textures[s], pipeline.palettes[s]);
         stage.sampler = textures[s].kind;
         stage.unnormalized = textures[s].unnormalized;
     }
@@ -295,6 +296,7 @@ FixedFunctionKey BuildKey(const VertexLayout& layout, BoundTexture textures[kFix
     if (reads_normal)
     {
         key.has_normal = layout.normal != kAbsent;
+        key.packed_normal = key.has_normal && layout.normal_packed;
         key.normalize_normals = key.has_normal && RenderStateValue(rs::kNormalizeNormals) != 0;
         if (!key.has_normal)
         {
@@ -552,10 +554,18 @@ void SetVertexAttributes(const VertexLayout& layout, uint32_t stride, size_t bas
             SetAttribute(index, size, type, normalized, stride, base + static_cast<size_t>(offset));
         }
     };
-    attribute(attr::kPosition, 0, static_cast<GLint>(layout.position_components), kGlFloat, false);
+    attribute(attr::kPosition, static_cast<int>(layout.position), static_cast<GLint>(layout.position_components),
+              kGlFloat, false);
     attribute(attr::kDiffuse, layout.diffuse, 4, kGlUnsignedByte, true);
     attribute(attr::kSpecular, layout.specular, 4, kGlUnsignedByte, true);
-    attribute(attr::kNormal, layout.normal, 3, kGlFloat, false);
+    if (layout.normal_packed)
+    {
+        attribute(attr::kNormal, layout.normal, 2, kGlUnsignedShort, false);  // unpacked in the shader
+    }
+    else
+    {
+        attribute(attr::kNormal, layout.normal, 3, kGlFloat, false);
+    }
     for (uint32_t i = 0; i < kMaxTexCoords; ++i)
     {
         attribute(attr::kTexCoord0 + i, layout.tex_offset[i], static_cast<GLint>(layout.tex_components[i]), kGlFloat,
@@ -593,6 +603,10 @@ void SetProgramAttributes(const vsh::Declaration& declaration, uint32_t stride, 
             type = kGlUnsignedByte;
             normalized = true;
             break;
+        case vsh::ElementKind::kNormPacked3:
+            // Two unsigned shorts, put back together in the shader.
+            SetAttribute(element.reg, 2, kGlUnsignedShort, false, stride, base + static_cast<size_t>(element.offset));
+            continue;
         }
         SetAttribute(element.reg, static_cast<int>(element.components), type, normalized, stride,
                      base + static_cast<size_t>(element.offset));
@@ -742,7 +756,7 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
                     indices.address, indices.base);
     }
     const PipelineState& pipeline = Pipeline();
-    const bool is_program = (pipeline.vertex_shader & fvf::kProgramHandle) != 0;
+    bool is_program = (pipeline.vertex_shader & fvf::kProgramHandle) != 0;
     const psh::Definition* pixel_shader = nullptr;
     if (pipeline.pixel_shader != 0)
     {
@@ -756,8 +770,25 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
         }
     }
     const ProgramShader* shader = nullptr;
+    const vsh::Declaration* declaration = nullptr;  // the program's, or SetVertexShaderInput's handle's
     VertexLayout layout;
-    if (is_program)
+    // A shader created with a declaration and no microcode is fixed-function
+    // vertex processing over the declaration's registers.
+    const ProgramShader* fixed = is_program ? FindProgramShader(pipeline.vertex_shader) : nullptr;
+    if (fixed != nullptr && fixed->fixed_function)
+    {
+        std::string error;
+        if (!LayoutFromDeclaration(fixed->declaration, &layout, &error))
+        {
+            ReportOncePer("fixed-function declaration", pipeline.vertex_shader, [&] {
+                return Format("%s: fixed-function shader %08X is not drawn: %s", name, pipeline.vertex_shader,
+                              error.c_str());
+            });
+            return;
+        }
+        is_program = false;
+    }
+    else if (is_program)
     {
         shader = FindProgramShader(pipeline.vertex_shader);
         if (shader == nullptr || !shader->usable)
@@ -768,7 +799,21 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
             });
             return;
         }
-        if ((shader->declaration.streams & ~1u) != 0)
+        declaration = &shader->declaration;
+        if (pipeline.input_shader != 0)
+        {
+            const ProgramShader* inputs = FindProgramShader(pipeline.input_shader);
+            if (inputs == nullptr)
+            {
+                ReportOncePer("vertex shader input", pipeline.input_shader, [&] {
+                    return Format("%s: SetVertexShaderInput handle %08X is unknown, not drawn", name,
+                                  pipeline.input_shader);
+                });
+                return;
+            }
+            declaration = &inputs->declaration;
+        }
+        if ((declaration->streams & ~1u) != 0)
         {
             ReportOncePer("vertex program streams", pipeline.vertex_shader, [&] {
                 return Format("%s: vertex-shader program %08X reads streams other than 0, not drawn yet", name,
@@ -784,7 +829,7 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
         {
             layout.tex_components[i] = 4;
         }
-        layout.stride = shader->declaration.stream_bytes[0];
+        layout.stride = declaration->stream_bytes[0];
     }
     else if (!DecodeFvf(pipeline.vertex_shader, &layout))
     {
@@ -796,7 +841,7 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
     std::vector<uint8_t> immediate_bytes;
     if (source.immediate != nullptr)
     {
-        immediate_bytes = is_program ? PackDeclarationVertices(shader->declaration, layout.stride,
+        immediate_bytes = is_program ? PackDeclarationVertices(*declaration, layout.stride,
                                                                source.immediate->vertices())
                                      : PackFvfVertices(layout, source.immediate->vertices());
     }
@@ -838,7 +883,7 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
             }
             if (is_program)
             {
-                textures[s] = ResolveTexture(pipeline.textures[s]);
+                textures[s] = ResolveTexture(pipeline.textures[s], pipeline.palettes[s]);
             }
             pixel_key.samplers[s] = textures[s].kind;
             if (s + 1 < kFixedFunctionStages)
@@ -988,7 +1033,7 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
     lap.Mark(profile::Phase::kUpload);
     if (is_program)
     {
-        SetProgramAttributes(shader->declaration, stride, vertex_program->used_inputs, vertex_offset);
+        SetProgramAttributes(*declaration, stride, vertex_program->used_inputs, vertex_offset);
     }
     else
     {
@@ -1027,9 +1072,13 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
         uniforms->Set4f(program->target, static_cast<float>(width), static_cast<float>(height),
                         pipeline.screen_space_offset_x, pipeline.screen_space_offset_y);
         uniforms->Set1f(program->wide, wide);
+        // SetModelView's matrices replace world x view and the projection.
         const std::array<float, 16> world_view =
-            Multiply(pipeline.transforms[ts::kWorld], pipeline.transforms[ts::kView]);
-        const std::array<float, 16> transform = Multiply(world_view, pipeline.transforms[ts::kProjection]);
+            pipeline.model_view_set ? pipeline.model_view
+                                    : Multiply(pipeline.transforms[ts::kWorld], pipeline.transforms[ts::kView]);
+        const std::array<float, 16> transform = pipeline.composite_set
+                                                    ? ScreenToClip(pipeline.composite)
+                                                    : Multiply(world_view, pipeline.transforms[ts::kProjection]);
         uniforms->SetMatrix4(program->transform, transform.data());
         uniforms->SetMatrix4(program->world_view, world_view.data());
         if (program->normal_matrix >= 0)
@@ -1095,6 +1144,17 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
 VertexSource StreamZero()
 {
     VertexSource source;
+    const PipelineState& pipeline = Pipeline();
+    if (pipeline.input_shader != 0)
+    {
+        // SetVertexShaderInput's stream 0 replaces SetStreamSource's.
+        const StreamInput& input = pipeline.inputs[0];
+        source.base =
+            input.vertex_buffer != 0 ? Memory().Read32(input.vertex_buffer + header::kData) + input.offset : 0;
+        source.stride = input.stride;
+        source.from_buffer = input.vertex_buffer != 0;
+        return source;
+    }
     const GuestAddress buffer = StreamVertexBuffer(0);
     source.base = buffer != 0 ? Memory().Read32(buffer + header::kData) : 0;
     source.stride = StreamStride(0);
@@ -1223,6 +1283,42 @@ void D3DDevice_CopyRects()
 }
 
 }  // namespace
+
+void DrawInlineVertices(uint32_t primitive, GuestAddress data, uint32_t bytes)
+{
+    const PipelineState& pipeline = Pipeline();
+    uint32_t stride = 0;
+    if ((pipeline.vertex_shader & fvf::kProgramHandle) != 0)
+    {
+        const ProgramShader* shader =
+            FindProgramShader(pipeline.input_shader != 0 ? pipeline.input_shader : pipeline.vertex_shader);
+        stride = shader != nullptr ? shader->declaration.stream_bytes[0] : 0;
+    }
+    else
+    {
+        VertexLayout layout;
+        stride = DecodeFvf(pipeline.vertex_shader, &layout) ? layout.stride : 0;
+    }
+    if (stride == 0)
+    {
+        ReportOncePer("push buffer stride", pipeline.vertex_shader, [&] {
+            return Format("push buffer draw with vertex shader %08X has no stream 0 stride; not drawn",
+                          pipeline.vertex_shader);
+        });
+        return;
+    }
+    VertexSource source;
+    source.base = data;
+    source.stride = stride;
+    Draw("push buffer", primitive, bytes / stride, IndexSource{}, source);
+}
+
+void DrawArrayElements(uint32_t primitive, GuestAddress indices, uint32_t count)
+{
+    IndexSource source_indices;
+    source_indices.address = indices;
+    Draw("push buffer elements", primitive, count, source_indices, StreamZero());
+}
 
 void RegisterDrawExports(runtime::HleRegistry& registry)
 {

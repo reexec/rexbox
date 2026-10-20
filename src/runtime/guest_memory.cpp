@@ -10,16 +10,44 @@ GuestMemory::~GuestMemory()
     Shutdown();
 }
 
+namespace
+{
+
+// Where the RAM shows again with the physical window on, as offsets from
+// the base (the generated code adds guest addresses to the base).
+constexpr uintptr_t kWindowAliases[] = {GuestMemory::kPhysicalWindow, GuestMemory::kWriteCombinedWindow};
+constexpr size_t kWindowAliasCount = sizeof(kWindowAliases) / sizeof(kWindowAliases[0]);
+
+}  // namespace
+
 bool GuestMemory::Initialize(size_t size)
 {
+    return Initialize(size, Options());
+}
+
+bool GuestMemory::Initialize(size_t size, const Options& options)
+{
     Shutdown();
-    void* block = platform::AllocateVirtualMemory(size, nullptr, false, true);
+    void* block = nullptr;
+    if (options.physical_window)
+    {
+        if (size < kRetailRamSize ||
+            !platform::AllocateGuestSpace(kRetailRamSize, size - kRetailRamSize, kWindowAliases, kWindowAliasCount, &block))
+        {
+            return false;
+        }
+    }
+    else
+    {
+        block = platform::AllocateVirtualMemory(size, nullptr, false, true);
+    }
     if (block == nullptr)
     {
         return false;
     }
     base_ = static_cast<uint8_t*>(block);
     size_ = size;
+    physical_window_ = options.physical_window;
 
     const size_t page_size = platform::PageSize();
     page_shift_ = 0;
@@ -31,7 +59,7 @@ bool GuestMemory::Initialize(size_t size)
     // only read here, so the probe loses nothing.
     void* probe_page = nullptr;
     size_t probe_count = 0;
-    tracks_writes_ = (size_t{1} << page_shift_) == page_size &&
+    tracks_writes_ = !physical_window_ && (size_t{1} << page_shift_) == page_size &&
                      platform::TakeWrittenPages(base_, page_size, &probe_page, 1, &probe_count);
     write_version_ = 0;
     page_versions_.assign(tracks_writes_ ? (size + page_size - 1) >> page_shift_ : 0, 0);
@@ -84,17 +112,35 @@ void GuestMemory::Shutdown()
 {
     if (base_ != nullptr)
     {
-        platform::FreeVirtualMemory(base_, size_);
+        if (physical_window_)
+        {
+            platform::FreeGuestSpace(base_, kRetailRamSize, size_ - kRetailRamSize, kWindowAliases, kWindowAliasCount);
+        }
+        else
+        {
+            platform::FreeVirtualMemory(base_, size_);
+        }
         base_ = nullptr;
         size_ = 0;
     }
+    physical_window_ = false;
     tracks_writes_ = false;
     page_versions_.clear();
 }
 
 bool GuestMemory::IsValid(GuestAddress address, size_t length) const
 {
-    return base_ != nullptr && address <= size_ && length <= size_ - address;
+    if (base_ == nullptr)
+    {
+        return false;
+    }
+    if (physical_window_ && address >= kPhysicalWindow)
+    {
+        // A window range may not run past the RAM it mirrors.
+        const GuestAddress folded = Fold(address);
+        return folded < kRetailRamSize && length <= kRetailRamSize - folded;
+    }
+    return address <= size_ && length <= size_ - address;
 }
 
 }  // namespace rexbox::runtime

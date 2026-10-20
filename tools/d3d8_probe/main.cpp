@@ -13,6 +13,7 @@
 #include "d3d8_gamma.h"
 #include "d3d8_immediate.h"
 #include "d3d8_psh.h"
+#include "d3d8_render_state.h"
 #include "d3d8_texture_format.h"
 #include "d3d8_vsh.h"
 
@@ -610,7 +611,7 @@ void CheckVertexPrograms()
     vsh::ReadProgram(bytes.data(), bytes.size(), &program, &error);
 
     uint32_t used = 0;
-    const std::string glsl = vsh::TranslateToGlsl(program, 1u << 3, false, &used);
+    const std::string glsl = vsh::TranslateToGlsl(program, 1u << 3, 0, false, &used);
     Expect(used == 1u, "the program reads v0 only");
     Expect(Contains(glsl, "layout(location = 0) in vec4 v0;"), "v0 is attribute 0");
     Expect(Contains(glsl, "vec4 m = vec4(dot(A, B));") && Contains(glsl, "R0.x = m.x;"), "dp4 writes R0.x");
@@ -619,7 +620,7 @@ void CheckVertexPrograms()
     Expect(Contains(glsl, "R1.x = i.x;") && !Contains(glsl, "R7.x = i.x;"), "a paired ILU writes R1");
     Expect(Contains(glsl, "vec4(rcc(C.x))"), "rcc");
     Expect(Contains(glsl, "(oPos.xyz - offset) / scale * oPos.w"), "the epilogue is undone");
-    Expect(vsh::TranslateToGlsl(program, 0, true, &used).rfind("#version 300 es", 0) == 0, "GLES variant");
+    Expect(vsh::TranslateToGlsl(program, 0, 0, true, &used).rfind("#version 300 es", 0) == 0, "GLES variant");
 
     // The epilogue and its undoing round-trip through the viewport constants.
     float scale[4];
@@ -650,8 +651,11 @@ void CheckVertexPrograms()
     Expect(vsh::ParseDeclaration(color, &declaration, &error) && declaration.bgra_inputs == (1u << 3) &&
                declaration.elements[1].offset == 12 && declaration.streams == 2,
            "D3DCOLOR register, skip of two DWORDs, stream 1");
-    Expect(!vsh::ParseDeclaration({0x20000000, 0x40160000, 0xFFFFFFFF}, &declaration, &error),
-           "NORMPACKED3 is refused for now");
+    Expect(vsh::ParseDeclaration({0x20000000, 0x40160000, 0xFFFFFFFF}, &declaration, &error) &&
+               declaration.packed_inputs == 1u && declaration.stream_bytes[0] == 4,
+           "NORMPACKED3 is one DWORD on its register");
+    Expect(!vsh::ParseDeclaration({0x20000000, 0x40260000, 0xFFFFFFFF}, &declaration, &error),
+           "a NORMPACKED3 with two values is refused");
     Expect(!vsh::ParseDeclaration({0x20000000, 0x40320000}, &declaration, &error), "a declaration needs an end");
 }
 
@@ -757,6 +761,90 @@ void CheckPixelShaders()
     Expect(matched, "fixed-function vertex shader writes every combiner input");
 }
 
+// The render-state layout from the block variables (design i007 4531):
+// 4134 when they are missing, XDK 4531's added slot 82 otherwise.
+void CheckRenderStateLayout()
+{
+    const RenderStateLayout none = DeriveRenderStateLayout(0x00102160, 0, 0);
+    ExpectEqual(none.deferred_first, 82, "layout without block variables: deferred at 82");
+    ExpectEqual(SlotFromLogical(none, rs::kZBias), rs::kZBias, "4134 layout: ZBias keeps its number");
+
+    // Crazy Taxi 3 (XDK 4531): D3D_g_RenderState 0x00102160, deferred 0x001022AC, complex 0x00102338.
+    const RenderStateLayout xdk4531 = DeriveRenderStateLayout(0x00102160, 0x001022AC, 0x00102338);
+    ExpectEqual(xdk4531.deferred_first, 83, "4531 layout: deferred block at 83");
+    ExpectEqual(xdk4531.complex_first, 118, "4531 layout: complex block at 118");
+    ExpectEqual(RenderStateSlotCount(xdk4531), 147, "4531 layout: 147 slots");
+    ExpectEqual(SlotFromLogical(xdk4531, rs::kColorWriteEnable), 67, "4531: simple states keep their slots");
+    ExpectEqual(SlotFromLogical(xdk4531, rs::kFogEnable), 83, "4531: FogEnable at 83");
+    ExpectEqual(SlotFromLogical(xdk4531, rs::kSwapFilter), 117, "4531: SwapFilter at 117");
+    ExpectEqual(SlotFromLogical(xdk4531, rs::kFillMode), 121, "4531: FillMode at 121 (D3DRS_FillMode)");
+    ExpectEqual(SlotFromLogical(xdk4531, rs::kZBias), 131, "4531: ZBias at 131 (D3DRS_ZBias)");
+    ExpectEqual(SlotFromLogical(xdk4531, rs::kDoNotCullUncompressed), 146, "4531: the last state at 146");
+    ExpectEqual(LogicalFromSlot(xdk4531, 82), kNoRenderState, "4531: slot 82 has no 4134 state");
+    ExpectEqual(LogicalFromSlot(xdk4531, 131), rs::kZBias, "4531: slot 131 is ZBias");
+    ExpectEqual(LogicalFromSlot(xdk4531, 147), kNoRenderState, "4531: past the end");
+    bool round_trip = true;
+    for (uint32_t logical = 0; logical < kLogicalStateCount; ++logical)
+    {
+        round_trip = round_trip && LogicalFromSlot(xdk4531, SlotFromLogical(xdk4531, logical)) == logical;
+    }
+    Expect(round_trip, "4531: every logical state survives slot and back");
+
+    const RenderStateLayout odd = DeriveRenderStateLayout(0x00102160, 0x001022AC, 0x00102340);
+    ExpectEqual(odd.deferred_first, 82, "a deferred block of the wrong size falls back to 4134");
+}
+
+// P8 through a palette (D3DCOLOR entries, A8R8G8B8), swizzled indices.
+void CheckPaletted()
+{
+    const uint32_t palette[2] = {0x80112233, 0xFF445566};
+    // 2x2 swizzled: (0,0) (1,0) (0,1) (1,1) in memory order.
+    const uint8_t indices[4] = {0, 1, 1, 5};
+    std::vector<uint8_t> rgba;
+    DecodePalettedLevel(indices, 2, 2, 1, palette, 2, &rgba);
+    ExpectTexel(rgba.data(), 0x11, 0x22, 0x33, 0x80, "P8 index 0 through the palette");
+    ExpectTexel(rgba.data() + 4, 0x44, 0x55, 0x66, 0xFF, "P8 index 1 through the palette");
+    ExpectTexel(rgba.data() + 12, 0, 0, 0, 0, "P8 index past the palette reads 0");
+}
+
+// XDK 4531 vertex input: D3DVSDT_NORMPACKED3, declaration-only shaders as
+// fixed-function layouts, and the NV2A methods of SetRenderState_Simple.
+void CheckXdk4531VertexInput()
+{
+    // D3DVSD_STREAM(0); v0 FLOAT3; v2 NORMPACKED3; v3 D3DCOLOR; v9 FLOAT2; END.
+    const std::vector<uint32_t> tokens = {0x20000000, 0x40320000, 0x40160002, 0x40400003, 0x40220009, 0xFFFFFFFF};
+    vsh::Declaration declaration;
+    std::string error;
+    Expect(vsh::ParseDeclaration(tokens, &declaration, &error), "a declaration with NORMPACKED3 parses: " + error);
+    ExpectEqual(declaration.packed_inputs, 1u << 2, "NORMPACKED3 marks its register");
+    ExpectEqual(declaration.stream_bytes[0], 28, "NORMPACKED3 takes one DWORD (12 + 4 + 4 + 8 bytes)");
+
+    VertexLayout layout;
+    Expect(LayoutFromDeclaration(declaration, &layout, &error), "the declaration maps to a fixed-function layout");
+    ExpectEqual(layout.stride, 28, "layout stride");
+    ExpectEqual(static_cast<uint32_t>(layout.normal), 12, "normal at 12");
+    Expect(layout.normal_packed, "the normal is packed");
+    ExpectEqual(static_cast<uint32_t>(layout.diffuse), 16, "diffuse at 16");
+    ExpectEqual(static_cast<uint32_t>(layout.tex_offset[0]), 20, "texture coordinates 0 at 20");
+    ExpectEqual(layout.tex_components[0], 2, "two texture coordinates");
+
+    FixedFunctionKey key;
+    key.has_normal = true;
+    key.packed_normal = true;
+    key.lighting = true;
+    const std::string vs = GenerateFixedFunctionVertexShader(key, false);
+    Expect(Contains(vs, "in vec2 a_normal_packed") && Contains(vs, "np << 21u"),
+           "a packed normal is unpacked in the fixed-function shader");
+
+    ExpectEqual(RenderStateFromNv2aMethod(0x354), rs::kZFunc, "method 0x354 is ZFUNC");
+    ExpectEqual(RenderStateFromNv2aMethod(0x304), rs::kAlphaBlendEnable, "method 0x304 is ALPHABLENDENABLE");
+    ExpectEqual(RenderStateFromNv2aMethod(0x364), rs::kStencilFunc, "method 0x364 is STENCILFUNC");
+    ExpectEqual(RenderStateFromNv2aMethod(0x338), rs::kSolidOffsetEnable, "method 0x338 is SOLIDOFFSETENABLE");
+    ExpectEqual(RenderStateFromNv2aMethod(0x260), 0, "method 0x260 is pixel-shader state 0");
+    ExpectEqual(RenderStateFromNv2aMethod(kMethodZMinMaxControl), kNoRenderState, "4531's added state has no 4134 ID");
+    ExpectEqual(RenderStateFromNv2aMethod(0x1234), kNoRenderState, "an unrelated method names no state");
+}
+
 }  // namespace
 
 int main()
@@ -772,6 +860,9 @@ int main()
     CheckLighting();
     CheckVertexPrograms();
     CheckPixelShaders();
+    CheckRenderStateLayout();
+    CheckPaletted();
+    CheckXdk4531VertexInput();
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

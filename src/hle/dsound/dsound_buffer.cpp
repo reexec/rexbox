@@ -5,12 +5,20 @@
 #include "dsound_internal.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 
 namespace rexbox::hle::dsound
 {
 
 namespace
 {
+
+// DSBSTOPEX_RELEASEWAVEFORM: a looping buffer plays out to its end.
+constexpr uint32_t kStopExReleaseWaveform = 0x2;
+// Xbox pitch: 4096 units per octave, 0 at 48 kHz (XAudioCalculatePitch).
+constexpr double kPitchPerOctave = 4096.0;
+constexpr double kPitchReferenceHz = 48000.0;
 
 // The play cursor in bytes: live while playing, saved while stopped.
 uint32_t PlayCursor(const Buffer& buffer)
@@ -407,6 +415,125 @@ void IDirectSoundBuffer_SetMixBins()
     call.Return(kDsOk, 2);
 }
 
+// HRESULT IDirectSoundBuffer_StopEx(LPDIRECTSOUNDBUFFER pThis, REFERENCE_TIME rtTimeStamp, DWORD dwFlags)
+// (stdcall, 16 bytes: the time stamp is 64-bit.) The time stamp is not
+// scheduled: the stop happens now. DSBSTOPEX_RELEASEWAVEFORM (2) lets a
+// looping buffer play out to its end instead; DSBSTOPEX_ENVELOPE (1) has no
+// envelope here and stops at once like DSBSTOPEX_IMMEDIATE (0).
+void IDirectSoundBuffer_StopEx()
+{
+    HleCall call;
+    const uint32_t flags = call.Arg(3);
+    DsoundState& state = State();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    Buffer* buffer = FindBuffer(call.Arg(0));
+    if (buffer == nullptr)
+    {
+        call.Return(kErrInvalidCall, 4);
+        return;
+    }
+    if ((flags & kStopExReleaseWaveform) != 0 && buffer->playing)
+    {
+        buffer->looping = false;
+    }
+    else if (buffer->playing)
+    {
+        if ((buffer->flags & (kCapsMixIn | kCapsFxIn)) == 0)
+        {
+            buffer->saved_bytes = PlayCursor(*buffer);
+        }
+        buffer->playing = false;
+    }
+    call.Return(kDsOk, 4);
+}
+
+// HRESULT IDirectSoundBuffer_SetFormat(LPDIRECTSOUNDBUFFER pThis, LPCWAVEFORMATEX pwfxFormat)
+void IDirectSoundBuffer_SetFormat()
+{
+    HleCall call;
+    const GuestAddress format = call.Arg(1);
+    DsoundState& state = State();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    Buffer* buffer = FindBuffer(call.Arg(0));
+    if (buffer == nullptr || format == 0)
+    {
+        call.Return(kErrInvalidCall, 2);
+        return;
+    }
+    buffer->valid_format = ReadFormat(format, &buffer->format);
+    buffer->decoded_block = -1;
+    if (!buffer->valid_format && (buffer->flags & (kCapsMixIn | kCapsFxIn)) == 0)
+    {
+        std::fprintf(stderr, "[dsound] SetFormat: format tag %04X, %u ch, %u Hz, %u bits is not decoded; silent\n",
+                     buffer->format.tag, buffer->format.channels, buffer->format.rate, buffer->format.bits);
+    }
+    UpdateGains(*buffer);
+    call.Return(kDsOk, 2);
+}
+
+// HRESULT IDirectSoundBuffer_SetPitch(LPDIRECTSOUNDBUFFER pThis, LONG lPitch)
+// Pitch is 4096 units per octave from 48 kHz, the inverse of
+// XAudioCalculatePitch (confirmed in the XDK 4531 library code).
+void IDirectSoundBuffer_SetPitch()
+{
+    HleCall call;
+    const int32_t pitch = static_cast<int32_t>(call.Arg(1));
+    DsoundState& state = State();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    Buffer* buffer = FindBuffer(call.Arg(0));
+    if (buffer == nullptr)
+    {
+        call.Return(kErrInvalidCall, 2);
+        return;
+    }
+    buffer->frequency =
+        static_cast<uint32_t>(std::lround(kPitchReferenceHz * std::exp2(static_cast<double>(pitch) / kPitchPerOctave)));
+    call.Return(kDsOk, 2);
+}
+
+// HRESULT IDirectSoundBuffer_SetMixBinVolumes(LPDIRECTSOUNDBUFFER pThis, LPCDSMIXBINS pMixBins)
+// (`_8`: the XDK 4039+ two-argument form.) Changes the volumes of mix bins the
+// buffer already sends to; bins it does not use are ignored.
+void IDirectSoundBuffer_SetMixBinVolumes_8()
+{
+    HleCall call;
+    const GuestAddress mix_bins = call.Arg(1);
+    DsoundState& state = State();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    Buffer* buffer = FindBuffer(call.Arg(0));
+    if (buffer == nullptr || mix_bins == 0)
+    {
+        call.Return(kErrInvalidCall, 2);
+        return;
+    }
+    Buffer update;
+    ReadMixBins(update, mix_bins);
+    for (const MixBinPair& pair : update.mix_bins)
+    {
+        for (MixBinPair& current : buffer->mix_bins)
+        {
+            if (current.bin == pair.bin)
+            {
+                current.volume = pair.volume;
+            }
+        }
+    }
+    UpdateGains(*buffer);
+    call.Return(kDsOk, 2);
+}
+
+// LONG XAudioCalculatePitch(DWORD dwFrequency): 4096 x log2(frequency / 48000),
+// rounded; 0 for 0 Hz (confirmed in the XDK 4531 library code: fyl2x, fistp).
+void XAudioCalculatePitch()
+{
+    HleCall call;
+    const uint32_t frequency = call.Arg(0);
+    const int32_t pitch =
+        frequency == 0 ? 0
+                       : static_cast<int32_t>(std::lrint(kPitchPerOctave * std::log2(frequency / kPitchReferenceHz)));
+    call.Return(static_cast<uint32_t>(pitch), 1);
+}
+
 }  // namespace
 
 void ReadMixBins(Buffer& buffer, GuestAddress mix_bins)
@@ -447,6 +574,19 @@ void RegisterBufferExports(runtime::HleRegistry& registry)
     registry.AddExport("dsound", "IDirectSoundBuffer_SetFrequency", &IDirectSoundBuffer_SetFrequency);
     registry.AddExport("dsound", "IDirectSoundBuffer_SetHeadroom", &IDirectSoundBuffer_SetHeadroom);
     registry.AddExport("dsound", "IDirectSoundBuffer_SetMixBins", &IDirectSoundBuffer_SetMixBins);
+    // XDK 4531 titles (Crazy Taxi 3); the CDirectSoundBuffer_* forms take the same arguments.
+    registry.AddExport("dsound", "IDirectSoundBuffer_StopEx", &IDirectSoundBuffer_StopEx);
+    registry.AddExport("dsound", "CDirectSoundBuffer_StopEx", &IDirectSoundBuffer_StopEx);
+    registry.AddExport("dsound", "IDirectSoundBuffer_SetFormat", &IDirectSoundBuffer_SetFormat);
+    registry.AddExport("dsound", "CDirectSoundBuffer_SetFormat", &IDirectSoundBuffer_SetFormat);
+    registry.AddExport("dsound", "IDirectSoundBuffer_SetPitch", &IDirectSoundBuffer_SetPitch);
+    registry.AddExport("dsound", "CDirectSoundBuffer_SetPitch", &IDirectSoundBuffer_SetPitch);
+    registry.AddExport("dsound", "IDirectSoundBuffer_SetMixBinVolumes_8", &IDirectSoundBuffer_SetMixBinVolumes_8);
+    registry.AddExport("dsound", "CDirectSoundBuffer_SetMixBinVolumes_8", &IDirectSoundBuffer_SetMixBinVolumes_8);
+    // HRESULT SetRolloffCurve(pThis, const FLOAT* pflPoints, DWORD dwPointCount, DWORD dwApply): 3D, accepted.
+    registry.AddExport("dsound", "IDirectSoundBuffer_SetRolloffCurve", &AcceptSetting<4>);
+    registry.AddExport("dsound", "CDirectSoundBuffer_SetRolloffCurve", &AcceptSetting<4>);
+    registry.AddExport("dsound", "XAudioCalculatePitch", &XAudioCalculatePitch);
     // Envelopes, LFOs, filters and 3D (design section 7).
     registry.AddExport("dsound", "IDirectSoundBuffer_SetEG", &AcceptSetting<2>);
     registry.AddExport("dsound", "IDirectSoundBuffer_SetLFO", &AcceptSetting<2>);
