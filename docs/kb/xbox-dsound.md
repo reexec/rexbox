@@ -1,4 +1,4 @@
-# Xbox DirectSound: PC와 다른 점, 구조체, 상수, ADPCM, 믹스 빈, 효과 이미지
+# Xbox DirectSound: PC와 다른 점, 구조체, 상수, ADPCM, 믹스 빈, 효과 이미지, 피치
 
 Xbox의 DirectSound(`DSOUND`)는 타이틀에 정적 링크되고 MCPX APU를 직접 다룬다. APU는 음성 처리기(VP, 하드웨어 음성 256개 중 3D 64개)와 두 DSP(GP: 효과, EP: 출력·AC3 인코드)로 이루어진다. 아래는 공개 XDK 문서 지식과 우리 바이너리의 lift 본문에서 왔다. 바이너리에서 확인한 것은 **확인됨**으로 표시하고 근거는 [analysis: DSOUND](../analysis/dsound.md)에 둔다.
 
@@ -65,3 +65,9 @@ flowchart LR
 * XDK의 `dsstdfx.bin`(표준 효과: I3DL2 리버브, 필터, 지연 등)은 GP DSP 프로그램이다. 게임이 파일을 읽어 `IDirectSound_DownloadEffectsImage`에 넘기면 라이브러리가 DSP에 올리고 `DSEFFECTIMAGEDESC`를 돌려준다. 이후 `GetEffectData`/`SetEffectData(effect, offset, …)`로 효과 상태(DSP X 메모리)를 읽고 쓴다.
 * 파일 배치(**확인됨**): `+0x800`에 헤더 6 DWORD(`+0x804` 코드 워드 수, `+0x80C` 상태(X) 워드 수), 본문은 `+0x818`부터 코드 → 상태, 그 뒤에 평문 효과 표(`DSEFFECTIMAGEDESC`와 같은 모양, 포인터 자리는 이미지 오프셋, 스크래치는 0xC000 기준), 끝에 효과별 8바이트 키. 코드 구간만 암호화되어 있다.
 * The XDK's `dsstdfx.bin` (the standard effects: I3DL2 reverb, filters, delays and others) is a GP DSP program. A title reads the file and passes it to `IDirectSound_DownloadEffectsImage`, which loads it into the DSP and returns a `DSEFFECTIMAGEDESC`; `GetEffectData`/`SetEffectData(effect, offset, …)` then read and write effect state (DSP X memory). File layout (**confirmed**): six header DWORDs at `+0x800` (`+0x804` code words, `+0x80C` state (X) words); the body from `+0x818`, code then state; then the plaintext effect table (shaped like `DSEFFECTIMAGEDESC`, with image offsets in the pointer slots and scratch offsets based at 0xC000); then an 8-byte key per effect. Only the code region is encrypted.
+
+## 6. 피치와 정지 / Pitch and stopping
+
+* 피치(**확인됨**, XDK 4531 `XAudioCalculatePitch`의 `fyl2x`·`fistp`): `pitch = round(4096 × log2(frequency / 48000))`, 0 Hz는 0. 한 옥타브가 4096이고 0이 48 kHz다. `IDirectSoundBuffer_SetPitch(pitch)`는 재생 속도를 `48000 × 2^(pitch / 4096)` Hz로 바꾼다.
+* `IDirectSoundBuffer_StopEx(pThis, REFERENCE_TIME rtTimeStamp, DWORD dwFlags)`는 64비트 시각 때문에 stdcall 16바이트다. 플래그: `DSBSTOPEX_IMMEDIATE` 0, `DSBSTOPEX_ENVELOPE` 1(릴리스 엔벨로프), `DSBSTOPEX_RELEASEWAVEFORM` 2(루프를 끝내고 끝까지 재생).
+* Pitch (**confirmed** from XDK 4531 `XAudioCalculatePitch`'s `fyl2x` and `fistp`): `pitch = round(4096 × log2(frequency / 48000))`, 0 for 0 Hz; an octave is 4096 and 0 is 48 kHz, so `IDirectSoundBuffer_SetPitch(pitch)` plays at `48000 × 2^(pitch / 4096)` Hz. `IDirectSoundBuffer_StopEx(pThis, REFERENCE_TIME rtTimeStamp, DWORD dwFlags)` is stdcall with 16 bytes because of the 64-bit time stamp; flags: `DSBSTOPEX_IMMEDIATE` 0, `DSBSTOPEX_ENVELOPE` 1 (the release envelope), `DSBSTOPEX_RELEASEWAVEFORM` 2 (end the loop and play to the end).

@@ -416,6 +416,53 @@ void ProbeAccepted()
     Check(Call("IDirectSoundBuffer_Release", {buffer}) == 0, "accepted settings leave the buffer intact");
 }
 
+// XDK 4531 additions (issue #9): pitch, format changes, StopEx and the
+// accepted rolloff curve.
+void ProbeXdk4531()
+{
+    Check(Call("XAudioCalculatePitch", {48000}) == 0 && Call("XAudioCalculatePitch", {96000}) == 4096 &&
+              Call("XAudioCalculatePitch", {24000}) == static_cast<uint32_t>(-4096) &&
+              Call("XAudioCalculatePitch", {0}) == 0,
+          "XAudioCalculatePitch: 4096 per octave from 48 kHz, 0 for 0 Hz");
+
+    const GuestAddress buffer = CreateBuffer(1, 1, 48000, 16, 2, 9600);  // 4800 frames
+    uint32_t play = 0;
+    uint32_t write = 0;
+    Call("IDirectSoundBuffer_SetPitch", {buffer, static_cast<uint32_t>(-4096)});
+    Call("IDirectSoundBuffer_Play", {buffer, 0, 0, 2});
+    Render(1000);
+    Cursors(buffer, &play, &write);
+    Check(play == 1000, "SetPitch(-4096) plays at half speed");
+    Call("IDirectSoundBuffer_Stop", {buffer});
+
+    // Stereo 16-bit: four bytes a frame.
+    const GuestAddress stereo = kScratch + 0x1C0;
+    g_memory->Fill(stereo, 0, 0x14);
+    g_memory->Write16(stereo + 0x0, 1);
+    g_memory->Write16(stereo + 0x2, 2);
+    g_memory->Write32(stereo + 0x4, 48000);
+    g_memory->Write32(stereo + 0x8, 192000);
+    g_memory->Write16(stereo + 0xC, 4);
+    g_memory->Write16(stereo + 0xE, 16);
+    Check(Call("IDirectSoundBuffer_SetFormat", {buffer, stereo}) == kOk, "SetFormat: PCM 16-bit stereo");
+    Call("IDirectSoundBuffer_SetPitch", {buffer, 0});
+    Call("IDirectSoundBuffer_Play", {buffer, 0, 0, 2});
+    Render(1000);
+    Cursors(buffer, &play, &write);
+    Check(play == 4000, "after SetFormat(stereo) a frame is four bytes");
+
+    Call("IDirectSoundBuffer_Play", {buffer, 0, 0, 3});  // LOOPING | FROMSTART
+    Call("IDirectSoundBuffer_StopEx", {buffer, 0, 0, 2});  // DSBSTOPEX_RELEASEWAVEFORM
+    Check(Status(buffer) == 1, "StopEx(RELEASEWAVEFORM) lets a looping buffer play out, no longer looping");
+    Call("IDirectSoundBuffer_StopEx", {buffer, 0, 0, 0});
+    Check(Status(buffer) == 0, "StopEx(IMMEDIATE) stops");
+
+    Check(Call("IDirectSoundBuffer_SetMixBinVolumes_8", {buffer, kBins}) == kOk &&
+              Call("IDirectSoundBuffer_SetRolloffCurve", {buffer, 0, 0, 0}) == kOk,
+          "SetMixBinVolumes and SetRolloffCurve are accepted");
+    Call("IDirectSoundBuffer_Release", {buffer});
+}
+
 }  // namespace
 
 int main()
@@ -445,6 +492,7 @@ int main()
     ProbeBufferData();
     ProbeEffects();
     ProbeAccepted();
+    ProbeXdk4531();
 
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

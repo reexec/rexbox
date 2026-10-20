@@ -9,10 +9,6 @@
 namespace rexbox::hle::dsound
 {
 
-namespace
-{
-
-// Reads a WAVEFORMATEX and tells whether the mixer can decode it.
 bool ReadFormat(GuestAddress address, WaveFormat* format)
 {
     runtime::GuestMemory& memory = Memory();
@@ -36,6 +32,9 @@ bool ReadFormat(GuestAddress address, WaveFormat* format)
     }
     return false;
 }
+
+namespace
+{
 
 // HRESULT DirectSoundCreate(LPGUID pguidDeviceId, LPDIRECTSOUND* ppDirectSound,
 //     LPUNKNOWN pUnkOuter)
