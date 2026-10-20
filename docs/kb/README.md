@@ -23,7 +23,7 @@ flowchart TD
 * [Xbox 커널 구조와 서비스: KPCR, KTHREAD, TLS, 디스패처 객체, 객체 이름공간, 사용자 APC](xbox-kernel-structures.md)
 * [Xbox D3D8 API: PC와 다른 점, 구조체 레이아웃, 상수](xbox-d3d8-api.md)
 * [Xbox XInput: 장치 종류, 구조체, 오류 코드, 키보드 대응](xbox-xinput.md)
-* [Xbox DirectSound: PC와 다른 점, 구조체, 상수, ADPCM, 믹스 빈, 효과 이미지](xbox-dsound.md)
+* [Xbox DirectSound: PC와 다른 점, 구조체, 상수, ADPCM, 믹스 빈, 효과 이미지, 피치](xbox-dsound.md)
 * [Xbox DVD 드라이브: SCSI pass-through와 보안 페이지 0x3E](xbox-dvd-drive.md)
 * [Xbox 가상 메모리 지도: 물리 메모리 창 0x80000000·0xF0000000](xbox-memory-map.md)
 
@@ -41,6 +41,6 @@ This directory holds the general Xbox knowledge needed to understand rexbox. The
 * [Xbox kernel structures and services: KPCR, KTHREAD, TLS, dispatcher objects, object namespace, user APCs](xbox-kernel-structures.md)
 * [The Xbox D3D8 API: differences from the PC, structure layouts, constants](xbox-d3d8-api.md)
 * [Xbox XInput: device types, structures, error codes, keyboard mapping](xbox-xinput.md)
-* [Xbox DirectSound: differences from PC, structures, constants, ADPCM, mix bins, effects image](xbox-dsound.md)
+* [Xbox DirectSound: differences from PC, structures, constants, ADPCM, mix bins, effects image, pitch](xbox-dsound.md)
 * [Xbox DVD drive: SCSI pass-through and security page 0x3E](xbox-dvd-drive.md)
 * [Xbox virtual memory map: the physical windows at 0x80000000 and 0xF0000000](xbox-memory-map.md)
