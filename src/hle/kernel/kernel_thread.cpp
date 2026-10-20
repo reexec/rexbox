@@ -141,6 +141,16 @@ std::shared_ptr<KernelThread> CreateGuestThread(GuestAddress function, const uin
     return thread;
 }
 
+}  // namespace
+
+std::shared_ptr<KernelThread> StartKernelGuestThread(GuestAddress function, uint32_t stack_size, std::string* error)
+{
+    return CreateGuestThread(function, nullptr, 0, stack_size, 0, false, error);
+}
+
+namespace
+{
+
 std::shared_ptr<KernelThread> FindThreadByEthread(GuestAddress ethread)
 {
     std::lock_guard<std::mutex> lock(State().dispatcher);

@@ -23,6 +23,7 @@ void RegisterKernelHle(runtime::HleRegistry& registry)
     RegisterFileExports(registry);
     RegisterCryptoExports(registry);
     RegisterApcExports(registry);
+    RegisterTimerExports(registry);
 }
 
 void InitializeKernel(const KernelConfig& config)
@@ -56,6 +57,7 @@ std::vector<uint32_t> BindKernelImports(const xbe::XbeImage& image, runtime::Gue
         }
         slot += 4;
     }
+    registry.BindGuestAddress(runtime::KernelThunkVa(kDpcLoopOrdinal), "rexbox_DpcLoop");
     return missing;
 }
 

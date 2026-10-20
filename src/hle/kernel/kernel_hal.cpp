@@ -1,8 +1,9 @@
 // HAL, interrupt, DPC, IRQL, AV, time and settings services.
 //
-// Interrupts and DPCs are accepted but never delivered: the hardware paths
-// that would raise them belong to D3D8/DSOUND, which are to be replaced at the
-// API level (design i003 section 4). Each such call is traced once.
+// Interrupts are accepted but never delivered: the hardware paths that would
+// raise them belong to D3D8/DSOUND, which are to be replaced at the API level
+// (design i003 section 4). Each such call is traced once. DPCs run on the DPC
+// thread (kernel_timer.cpp).
 
 #include "kernel_internal.h"
 
@@ -168,19 +169,7 @@ void KeInitializeDpc()
     call.Return(0, 3);
 }
 
-// BOOLEAN KeInsertQueueDpc(PRKDPC Dpc, PVOID SystemArgument1, PVOID SystemArgument2)
-void KeInsertQueueDpc()
-{
-    HleCall call;
-    TraceOnce("KeInsertQueueDpc", "queued but never run");
-    call.Return(1, 3);
-}
-
-// BOOLEAN KeRemoveQueueDpc(PRKDPC Dpc)
-void KeRemoveQueueDpc()
-{
-    HleCall().Return(0, 1);
-}
+// KeInsertQueueDpc and KeRemoveQueueDpc: kernel_timer.cpp (the DPC thread).
 
 // --- Bus, shutdown, sections ---------------------------------------------
 
@@ -346,8 +335,6 @@ void RegisterHalExports(runtime::HleRegistry& registry)
     registry.AddExport("kernel", "KeSynchronizeExecution", &KeSynchronizeExecution);
     registry.AddExport("kernel", "HalGetInterruptVector", &HalGetInterruptVector);
     registry.AddExport("kernel", "KeInitializeDpc", &KeInitializeDpc);
-    registry.AddExport("kernel", "KeInsertQueueDpc", &KeInsertQueueDpc);
-    registry.AddExport("kernel", "KeRemoveQueueDpc", &KeRemoveQueueDpc);
     registry.AddExport("kernel", "HalReadWritePCISpace", &HalReadWritePCISpace);
     registry.AddExport("kernel", "HalRegisterShutdownNotification", &HalRegisterShutdownNotification);
     registry.AddExport("kernel", "HalIsResetOrShutdownPending", &HalIsResetOrShutdownPending);

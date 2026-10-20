@@ -52,7 +52,7 @@ flowchart LR
 | DPC 큐 | `KeInsertQueueDpc`: KDPC `Inserted`(+2)가 이미 1이면 FALSE, 아니면 SystemArgument1/2(+0x14/+0x18)를 쓰고 `Inserted = 1`로 큐에 넣고 TRUE. `KeRemoveQueueDpc`: 큐에 있으면 빼고 TRUE |
 | DPC 스레드 | 커널 소유의 게스트 스레드 하나를 첫 DPC 때 `CreateGuestThread`로 만든다. 시작 주소는 커널 thunk 영역의 예약 ordinal(실제 ordinal 범위 밖, 예: `0x3FF`)의 합성 주소이고, 그 주소에 내부 export `rexbox_DpcLoop`를 바인딩한다. 루프는 큐를 기다렸다가 항목마다 `Inserted = 0`, KPCR IRQL = 2, `CallGuest(DeferredRoutine, {Dpc, DeferredContext, Arg1, Arg2})`, IRQL = 0을 한다 |
 | `KeWaitForMultipleObjects` | 이미 작업 트리에 있는 구현: 객체 포인터 배열로 `WaitAndDeliver`. wait block 배열은 쓰지 않는다 |
-| 종료 | 타이머 서비스 스레드는 프로세스 종료 때 깨워 끝낸다(detach하지 않는다). DPC 스레드는 다른 게스트 스레드처럼 프로세스와 함께 끝난다 |
+| 종료 | 타이머 서비스 스레드는 `KeTickCount` 스레드처럼 detach하며 조건 변수에서 자다가 프로세스와 함께 끝난다(구현에서 정함: 커널에 종료 훅이 없다). DPC 스레드는 다른 게스트 스레드처럼 프로세스와 함께 끝난다 |
 
 ### 동시성과 위험
 
@@ -98,7 +98,7 @@ As in the diagram above.
 * **DPC queue**: `KeInsertQueueDpc` returns FALSE when the KDPC's `Inserted` (+2) is already 1, else writes SystemArgument1/2 (+0x14/+0x18), sets `Inserted = 1`, queues it and returns TRUE; `KeRemoveQueueDpc` unqueues and returns TRUE when it was queued.
 * **DPC thread**: one kernel-owned guest thread made with `CreateGuestThread` at the first DPC. It starts at the synthetic address of a reserved ordinal in the kernel thunk range (outside the real ordinals, e.g. `0x3FF`), bound to the internal export `rexbox_DpcLoop`. The loop waits on the queue and, for each entry, clears `Inserted`, sets the KPCR IRQL to 2, calls `CallGuest(DeferredRoutine, {Dpc, DeferredContext, Arg1, Arg2})` and sets the IRQL back to 0.
 * **`KeWaitForMultipleObjects`**: the implementation already in the working tree, `WaitAndDeliver` on the object pointers; the wait-block array is unused.
-* **Shutdown**: the timer service thread is woken and joined at process end (not detached); the DPC thread ends with the process like any guest thread.
+* **Shutdown**: the timer service thread is detached like the `KeTickCount` thread and ends with the process while asleep on its condition variable (settled in the implementation: the kernel has no shutdown hook); the DPC thread ends with the process like any guest thread.
 
 **Concurrency and risk**: the Xbox has one CPU, so DISPATCH_LEVEL code is never preempted by another thread or a DPC; rexbox runs guest threads concurrently, so title code that raises the IRQL to keep DPCs out may overlap the DPC thread (**risk**). Phase 1 (this design) does not prevent that race; if a run measures it, phase 2 adds a recursive "dispatch lock" taken when the IRQL rises from below 2 to 2 or more, released when it drops below 2, and held by the DPC thread while it runs a DPC. Firing may be late by the host scheduler's slack, the same precision as waits.
 

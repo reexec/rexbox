@@ -39,14 +39,14 @@ flowchart BT
 | `rexbox_xbe` | `src/xbe/` | XBE 파싱 | 구현 |
 | `rexbox_runtime` | `src/runtime/` | `GuestMemory`(based 모델, 스칼라 접근, 페이지별 쓰기 버전 `WriteVersion`, 설계 i046; 옵션 `physical_window`로 RAM을 0x80000000·0xF0000000에 다시 매핑, 그때는 쓰기 추적 없음, [설계 i008](docs/design/20261020-i008-physical-window.md)), `GuestHeap`(페이지 할당자, 작은 객체용 slab, 물리 RAM 64 MiB와 가상 메모리 전용 위 64 MiB), `HleRegistry`, `GuestCpu`·`GuestExecutor` 계약, `Environment`, `HleCall`, 게스트 잠금 `rexbox_guest_lock_enter/leave`(C 계약, 설계 i068), 커널 thunk 합성 주소, 정지 보고 `thread_activity`(설계 i060) | 구현 |
 | `rexbox_recomp` | `src/recomp/` | 생성 코드 ABI 전역·콜백(`recomp_abi.c`, `recomp_bridge.cpp`), `RecompExecutor`(게스트 스레드 = 호스트 스레드, `CallGuest`, 스레드별 보고), XDK override 진입점 `rexbox_hle_enter`. lifter 헤더는 `REXBOX_XBOXRECOMP_DIR`에서 온다. upstream xboxrecomp v0.15.0이 선언하는 `g_eflags`, `xbox_Cpuid`, `xbox_PortIn/Out`, `g_xbox_guest_cpu_preempt`/`xbox_GuestCpuPreempt`도 정의하고, reJSRF fork의 `recomp_unresolved_stub_log`도 정의해 두 헤더 모두에 링크된다 | 구현 |
-| `rexbox_hle_kernel` | `src/hle/kernel/` | 커널 export 104개(아래 표) | 부팅이 닿은 서비스 |
+| `rexbox_hle_kernel` | `src/hle/kernel/` | 커널 export 107개(아래 표; 내부 `rexbox_DpcLoop` 포함) | 부팅이 닿은 서비스 |
 | `rexbox_hle_d3d8` | `src/hle/d3d8/` | Direct3D 8 HLE(아래 표): 어댑터·모드·Caps 질의, 디바이스·서피스·리소스 객체(Xbox 헤더 레이아웃), 라이브러리 전역에 쓰는 상태 setter, 리소스 생성·Lock, 셰이더 핸들, GL 고정 기능 그리기와 정점 프로그램·레지스터 컴바이너 셰이더, 렌더 타깃(표면 메모리로 식별, 설계 i071), 내부 렌더링 배율(설계 i080), MSAA·SMAA·비등방성(설계 i089), Hor+ 와이드스크린(설계 i085), 가상 vblank 시계(설계 i082·i095), 창 제목·설정 기본값 계약 `d3d8_display.h` | export 110개; 프로그래머블 셰이더·조명·안개는 보고만 |
 | `rexbox_hle_xinput` | `src/hle/xinput/` | XAPI 장치·입력 함수 11개(`XInitDevices`, `XGetDevices`, `XGetDeviceChanges`, `XInput*`, `XMountMUA`/`XUnmountMU`) on 플랫폼 입력 계약 | 게임패드 포트 0(호스트 게임패드 또는 키보드), 메모리 유닛 없음 |
 | `rexbox_hle_dsound` | `src/hle/dsound/` | DSOUND 함수 50개(`DirectSoundCreate`, `IDirectSound_*`, `IDirectSoundBuffer_*`) on 플랫폼 오디오 계약: 객체·버퍼 메모리, Lock·Play·Stop·커서(원본 의미), PCM 8/16·Xbox ADPCM 믹서(주파수·볼륨·루프 구간·믹스 빈), 효과 이미지 서술자와 상태 읽기·쓰기 | 3D·EG·LFO·필터·DSP 효과는 `S_OK`만 |
 | `rexbox_hle_xapi` | `src/hle/xapi/` | XDK 라이브러리 HLE | 등록 진입점만 |
 | `rexbox_xbe_info` | `tools/xbe_info/` | XBE 정보 | 구현 |
 | `rexbox_xdk_symbols` | `tools/xdk_symbols/` | XbSymbolDatabase로 XDK 함수·변수 식별 → JSON (`scripts/recomp/regenerate.py`가 사용) | 구현 |
-| `rexbox_kernel_probe` | `tools/kernel_probe/` | 게임 없이 커널 export 검사(56개, CI) | 구현 |
+| `rexbox_kernel_probe` | `tools/kernel_probe/` | 게임 없이 커널 export 검사(83개, CI) | 구현 |
 | `rexbox_dsound_probe` | `tools/dsound_probe/` | 게임 없이 DSOUND export 검사(48개, CI) | 구현 |
 | `rexbox_d3d8_probe` | `tools/d3d8_probe/` | 게임·GPU 없이 D3D8 HLE의 순수 부분 검사(163개, CI) | 구현 |
 
@@ -59,12 +59,13 @@ flowchart BT
 | `kernel_hle.cpp` | 등록, 초기화, thunk 슬롯 바인딩(함수 → 합성 주소, 데이터 → 변수 주소) |
 | `kernel_state.cpp`, `kernel_internal.h` | 디스패처 잠금, 핸들 표, 구조체 오프셋, 공용 도우미 |
 | `kernel_thread.cpp` | KPCR/ETHREAD/스택/TLS 구성, `PsCreateSystemThreadEx`, 종료, 일시정지, 우선순위, 초기 스레드 |
-| `kernel_sync.cpp` | 이벤트, 세마포어, 뮤턴트, 타이머, 대기(경고 가능 사용자 모드 대기는 사용자 APC를 실행하고 `STATUS_USER_APC`) |
+| `kernel_sync.cpp` | 이벤트, 세마포어, 뮤턴트, 타이머 초기화, 대기(`KeWaitForMultipleObjects` 포함; 경고 가능 사용자 모드 대기는 사용자 APC를 실행하고 `STATUS_USER_APC`) |
+| `kernel_timer.cpp` | 발화하는 타이머(타이머 서비스 호스트 스레드), DPC 큐와 DPC 스레드(예약 ordinal `0x3FF`의 `rexbox_DpcLoop`, IRQL 2), [설계 i012](docs/design/20261020-i012-kernel-timers-dpc.md) |
 | `kernel_apc.cpp` | 스레드별 사용자 APC 큐(파일 I/O의 `ApcRoutine`), 전달, `NtUserIoApcDispatcher` |
 | `kernel_memory.cpp` | 가상·연속·시스템 메모리, 풀 |
 | `kernel_object.cpp` | `NtClose`, `Ob*` |
 | `kernel_rtl.cpp` | 크리티컬 섹션, 문자열, 시간 변환, 상태 코드(공용 `NtStatusToDosError`) |
-| `kernel_hal.cpp` | IRQL, 시간, 인터럽트·DPC(전달 안 함), PCI, AV, 비휘발 설정, `DbgPrint` |
+| `kernel_hal.cpp` | IRQL, 시간, 인터럽트(전달 안 함), `KeInitializeDpc`, PCI, AV, 비휘발 설정, `DbgPrint` |
 | `kernel_crypto.cpp` | `XcSHA*` (SHA-1) |
 | `kernel_file.cpp`, `kernel_vfs.*` | 파일·디렉터리·장치·볼륨·IOCTL(디스크 geometry·파티션, DVD 드라이브의 `IOCTL_SCSI_PASS_THROUGH`: MODE SENSE 페이지 0x3E의 보안 페이지 답, [설계 i006](docs/design/20261020-i006-scsi-pass-through.md)), Xbox 이름공간 → 호스트 디렉터리 |
 | `kernel_data.cpp` | 데이터 export, `KeTickCount` 갱신 스레드, 커널 시간 |
@@ -156,7 +157,7 @@ This records the structure of the code as implemented now. The code was built in
 
 ## 1. Layers and CMake targets
 
-The diagram and tables above apply. In short: `rexbox_platform` (virtual memory with written-page queries, guarded runs, host threads and their CPU time, a sampling profiler, and the display, input, audio, overlay and paths contracts implemented on SDL3 in `src/platform/sdl/`; Win32 and Linux implementations, the Linux one on mmap with soft-dirty pages, C++ exceptions and signals for guarded calls, pthreads and `/proc`, without the sampler, [design i004](docs/design/20261020-i004-linux-preparation.md); the application names itself through `SetDisplayTitle` and `SetApplicationIdentity`) ← `rexbox_runtime` (guest memory: a 128 MiB address space whose low 64 MiB stands for physical RAM, mapped again at 0x80000000 and 0xF0000000 when a title turns the physical window on, [design i008](docs/design/20261020-i008-physical-window.md); a page heap with slabs; HLE registry, the GuestCpu/GuestExecutor contract, Environment, HleCall, the guest lock, the stall monitor) ← `rexbox_recomp` (lifter ABI adapter and `RecompExecutor`, one host thread per guest thread; it defines the state and services both upstream xboxrecomp v0.15.0 and reJSRF's fork declare) and the HLE modules: the kernel (104 exports, one file per area), D3D8 (110 exports on OpenGL 3.3: fixed-function and shader draws, render targets keyed by surface memory, render scale, MSAA/SMAA/anisotropy, Hor+ widescreen, a virtual vblank clock), DSOUND (50 functions with a guest-memory mixer), XInput (11 XAPI device and input functions). Tools: `rexbox_xbe_info`, `rexbox_xdk_symbols`, and the three probes that run in CI without game data (56, 48 and 163 checks). Tools that compare a title's code with its lifted originals (reJSRF's `rejsrf_decomp_check`, `rejsrf_d3d8_check`) stay in the title project.
+The diagram and tables above apply. In short: `rexbox_platform` (virtual memory with written-page queries, guarded runs, host threads and their CPU time, a sampling profiler, and the display, input, audio, overlay and paths contracts implemented on SDL3 in `src/platform/sdl/`; Win32 and Linux implementations, the Linux one on mmap with soft-dirty pages, C++ exceptions and signals for guarded calls, pthreads and `/proc`, without the sampler, [design i004](docs/design/20261020-i004-linux-preparation.md); the application names itself through `SetDisplayTitle` and `SetApplicationIdentity`) ← `rexbox_runtime` (guest memory: a 128 MiB address space whose low 64 MiB stands for physical RAM, mapped again at 0x80000000 and 0xF0000000 when a title turns the physical window on, [design i008](docs/design/20261020-i008-physical-window.md); a page heap with slabs; HLE registry, the GuestCpu/GuestExecutor contract, Environment, HleCall, the guest lock, the stall monitor) ← `rexbox_recomp` (lifter ABI adapter and `RecompExecutor`, one host thread per guest thread; it defines the state and services both upstream xboxrecomp v0.15.0 and reJSRF's fork declare) and the HLE modules: the kernel (107 exports, one file per area; timers fire from a host timer-service thread and DPCs run on a kernel-owned guest thread, [design i012](docs/design/20261020-i012-kernel-timers-dpc.md)), D3D8 (110 exports on OpenGL 3.3: fixed-function and shader draws, render targets keyed by surface memory, render scale, MSAA/SMAA/anisotropy, Hor+ widescreen, a virtual vblank clock), DSOUND (50 functions with a guest-memory mixer), XInput (11 XAPI device and input functions). Tools: `rexbox_xbe_info`, `rexbox_xdk_symbols`, and the three probes that run in CI without game data (83, 48 and 163 checks). Tools that compare a title's code with its lifted originals (reJSRF's `rejsrf_decomp_check`, `rejsrf_d3d8_check`) stay in the title project.
 
 ## 2. Consumer contract
 

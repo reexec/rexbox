@@ -59,6 +59,7 @@ add_library(rexbox_hle_kernel STATIC
     hle/kernel/kernel_rtl.cpp
     hle/kernel/kernel_state.cpp
     hle/kernel/kernel_sync.cpp
+    hle/kernel/kernel_timer.cpp
     hle/kernel/kernel_thread.cpp
     hle/kernel/kernel_vfs.cpp
 )
