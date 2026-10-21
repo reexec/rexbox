@@ -30,9 +30,11 @@ std::atomic<uint32_t> g_hertz{60};  // the guest's refresh
 constexpr uint32_t kUnpacedHertz = 10000;
 std::atomic<uint32_t> g_rate{60};  // the clock's rate now
 std::mutex g_rate_mutex;
-// How far a tick leads the host's blank once aligned: Swap's wait must wake
-// in time for the blit and the swap request to make that blank.
-constexpr auto kAlignLead = std::chrono::milliseconds(3);
+// How far a tick trails the host's blank once aligned: Swap only queues the
+// flip, so a title waiting for the blank starts its frame just after the
+// host's and has nearly the whole period to make the next one
+// (docs/design/20261021-i018-swap-queues-flip.md).
+constexpr auto kAlignLag = std::chrono::milliseconds(1);
 std::atomic<uint64_t> g_last_present{0};
 std::atomic<bool> g_wait{true};
 
@@ -103,10 +105,10 @@ void AlignVerticalBlank(Clock::time_point host_blank)
     {
         return;  // not paced to the guest's refresh, so nothing to follow
     }
-    // Tick n (the current one) starts kAlignLead before host_blank, so tick
-    // n + 1 comes kAlignLead before the host's next blank.
+    // Tick n (the current one) is kept and tick n + 1 comes kAlignLag after
+    // host_blank.
     const uint64_t n = CountAt(host_blank);
-    const Clock::time_point base = host_blank - kAlignLead - Period() * static_cast<int64_t>(n);
+    const Clock::time_point base = host_blank + kAlignLag - Period() * static_cast<int64_t>(n + 1);
     g_phase.store((base - g_start).count());
 }
 
@@ -127,23 +129,26 @@ void WaitForVerticalBlank()
     std::this_thread::sleep_until(TickTime(VerticalBlankCount() + 1));
 }
 
-void WaitForPresentInterval(uint32_t interval)
+void QueuePresent(uint32_t interval)
 {
     if (interval == 0 || (interval & kIntervalImmediate) != 0)
     {
         g_last_present.store(VerticalBlankCount());
         return;
     }
-    const uint64_t now = VerticalBlankCount();
-    uint64_t target = g_last_present.load() + interval;
-    if (target <= now)
-    {
-        // Late (or the first present): show at the next blank.
-        target = now + 1;
-    }
+    // One flip in the queue: the previous present's blank must have come.
+    const uint64_t queued = g_last_present.load();
+    if (VerticalBlankCount() < queued)
     {
         const runtime::ScopedWait note("D3D8 present interval", nullptr, 0, false, 17 * static_cast<int64_t>(interval));
-        std::this_thread::sleep_until(TickTime(target));
+        std::this_thread::sleep_until(TickTime(queued));
+    }
+    const uint64_t now = VerticalBlankCount();
+    uint64_t target = queued + interval;
+    if (target <= now)
+    {
+        // Late (or the first present): shown at the next blank.
+        target = now + 1;
     }
     g_last_present.store(target);
 }

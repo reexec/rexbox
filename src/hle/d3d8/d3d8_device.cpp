@@ -568,7 +568,7 @@ void D3DDevice_Swap()
                                        : state.back_buffers[0];
         DumpFrameIfRequested(shown, state.frame_count);
         lap.Mark(profile::Phase::kPresent);
-        WaitForPresentInterval(state.present.presentation_interval);
+        QueuePresent(state.present.presentation_interval);
         lap.Mark(profile::Phase::kWait);
         PresentRenderTarget(shown, state.gamma_ramp);
         presented = true;
@@ -578,7 +578,7 @@ void D3DDevice_Swap()
     if (!presented)
     {
         // Without a display the frame loop keeps the same pace.
-        WaitForPresentInterval(state.present.presentation_interval);
+        QueuePresent(state.present.presentation_interval);
         lap.Mark(profile::Phase::kWait);
     }
     if (state.frame_count == 1)

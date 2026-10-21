@@ -19,7 +19,7 @@ uint32_t VerticalBlankRate();
 
 // The host's vertical blank happened at `host_blank` (a swap with vsync
 // returned then): moves the clock's phase so its next tick falls a little
-// before the host's next blank, keeping the current tick number. Called each
+// after that blank, keeping the current tick number. Called each
 // frame on monitors near the guest refresh, it locks the clock to the host
 // (docs/design/20261017-i082-vsync.md).
 void AlignVerticalBlank(std::chrono::steady_clock::time_point host_blank);
@@ -37,10 +37,13 @@ bool VerticalBlankWait();
 // Sleeps until the next vertical blank.
 void WaitForVerticalBlank();
 
-// Sleeps until `interval` vertical blanks have passed since the previous
-// present (D3DPRESENT_INTERVAL_ONE = 1, TWO = 2, ...; 0 or IMMEDIATE does
-// not wait).
-void WaitForPresentInterval(uint32_t interval);
+// Queues a present for `interval` vertical blanks after the previous one
+// (D3DPRESENT_INTERVAL_ONE = 1, TWO = 2, ...), or the next blank when that
+// has passed, and returns, as the Xbox's Swap puts the flip in the push
+// buffer. It sleeps only while the previous present's blank has not come
+// (one flip in the queue). 0 or IMMEDIATE does not wait
+// (docs/design/20261021-i018-swap-queues-flip.md).
+void QueuePresent(uint32_t interval);
 
 // Whether the clock is inside the vertical blank right now, and the scan
 // line it would be on (for D3DDevice_GetRasterStatus).
