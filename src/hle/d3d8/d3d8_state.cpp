@@ -274,6 +274,10 @@ void D3DDevice_SetModelView()
     if (g_pipeline.composite_set)
     {
         std::memcpy(g_pipeline.composite.data(), memory.Translate(composite), 64);
+    }
+    if (g_pipeline.composite_set && D3d8TraceEnabled())
+    {
+        // Called per object: the comparison and the text only while tracing.
         const std::array<float, 16> formed =
             MapViewport(MultiplyMatrices(g_pipeline.model_view, g_pipeline.transforms[ts::kProjection]), false);
         float largest = 0.0f;
@@ -396,9 +400,12 @@ void D3DDevice_SetVertexShaderInput()
                 AddResourceBinding(inputs[i].vertex_buffer);
             }
         }
-        TraceOnce(Format("vertex shader input %08X %u", handle, count),
-                  Format("SetVertexShaderInput: handle %08X, %u stream(s), stream 0 buffer %08X stride %u offset %u",
-                         handle, count, inputs[0].vertex_buffer, inputs[0].stride, inputs[0].offset));
+        if (D3d8TraceEnabled())
+        {
+            TraceOnce(Format("vertex shader input %08X %u", handle, count),
+                      Format("SetVertexShaderInput: handle %08X, %u stream(s), stream 0 buffer %08X stride %u offset %u",
+                             handle, count, inputs[0].vertex_buffer, inputs[0].stride, inputs[0].offset));
+        }
     }
     for (const StreamInput& previous : g_pipeline.inputs)
     {
