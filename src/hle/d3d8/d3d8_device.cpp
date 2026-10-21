@@ -763,6 +763,29 @@ void D3D_SetFence()
     call.Return(++State().fence_counter, 1);
 }
 
+// DWORD D3DDevice_InsertFence(void): the original is D3D_SetFence(0); the
+// same counter keeps fences from both in one order.
+void D3DDevice_InsertFence()
+{
+    HleCall call;
+    call.Return(++State().fence_counter, 0);
+}
+
+// void D3DDevice_BlockOnFence(DWORD Fence): the original waits in
+// D3D_BlockOnTime; drawing is synchronous here, so every fence has passed.
+void D3DDevice_BlockOnFence()
+{
+    HleCall call;
+    call.Return(kD3dOk, 1);
+}
+
+// BOOL D3DDevice_IsFencePending(DWORD Fence): no fence is ever pending.
+void D3DDevice_IsFencePending()
+{
+    HleCall call;
+    call.Return(0, 1);
+}
+
 // Functions with no arguments whose work (push buffer, GPU idle) does not exist here.
 void AcceptNone()
 {
@@ -822,6 +845,9 @@ void RegisterDeviceExports(runtime::HleRegistry& registry)
     registry.AddExport("d3d8", "D3DDevice_GetTile", &D3DDevice_GetTile);
     registry.AddExport("d3d8", "D3D_SetPushBufferSize", &AcceptTwoArguments);
     registry.AddExport("d3d8", "D3D_SetFence", &D3D_SetFence);
+    registry.AddExport("d3d8", "D3DDevice_InsertFence", &D3DDevice_InsertFence);
+    registry.AddExport("d3d8", "D3DDevice_BlockOnFence", &D3DDevice_BlockOnFence);
+    registry.AddExport("d3d8", "D3DDevice_IsFencePending", &D3DDevice_IsFencePending);
     registry.AddExport("d3d8", "D3D_BlockOnResource", &AcceptOneArgument);
     registry.AddExport("d3d8", "D3D_CommonSetDebugRegisters", &AcceptNone);
     registry.AddExport("d3d8", "D3D_KickOffAndWaitForIdle", &AcceptNone);
