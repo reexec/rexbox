@@ -16,7 +16,9 @@ namespace rexbox::hle::d3d8
 
 bool D3d8TraceEnabled();
 
-// Prints "[d3d8] <text>" once per distinct `key` when tracing is on.
+// Prints "[d3d8] <text>" once per distinct `key` when tracing is on. The
+// arguments are built before the check, so a site reached on every call or
+// draw tests D3d8TraceEnabled() first.
 void TraceOnce(const std::string& key, const std::string& text);
 
 // Prints "[d3d8] <text>" once per distinct `key` regardless of tracing: for

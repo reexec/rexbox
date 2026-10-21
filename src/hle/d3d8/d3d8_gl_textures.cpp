@@ -287,9 +287,12 @@ bool Upload(GuestAddress header, CachedTexture* cached)
     cached->bound.format = format;
     cached->bound.kind = target == kGlTexture3D ? SamplerKind::k3D : SamplerKind::k2D;
     cached->bound.unnormalized = linear;
-    TraceOnce(Format("upload %02X %u %u", format, cached->bound.width, cached->bound.height),
-              Format("texture upload: format %02X %ux%u, %u level(s)%s", format, cached->bound.width,
-                     cached->bound.height, uploaded, linear ? ", linear (texel coordinates)" : ""));
+    if (D3d8TraceEnabled())
+    {
+        TraceOnce(Format("upload %02X %u %u", format, cached->bound.width, cached->bound.height),
+                  Format("texture upload: format %02X %ux%u, %u level(s)%s", format, cached->bound.width,
+                         cached->bound.height, uploaded, linear ? ", linear (texel coordinates)" : ""));
+    }
     return true;
 }
 
