@@ -287,6 +287,7 @@ bool Upload(GuestAddress header, CachedTexture* cached)
     cached->bound.format = format;
     cached->bound.kind = target == kGlTexture3D ? SamplerKind::k3D : SamplerKind::k2D;
     cached->bound.unnormalized = linear;
+    profile::CountTextureUpload(cached->gl_bytes);
     if (D3d8TraceEnabled())
     {
         TraceOnce(Format("upload %02X %u %u", format, cached->bound.width, cached->bound.height),
