@@ -484,10 +484,30 @@ void BindStageTexture(uint32_t stage, const BoundTexture& texture)
     // The user's anisotropic filtering, on linear minification only (point
     // filtering is the title's choice; docs/design/20261017-i089-anti-aliasing.md).
     const uint32_t anisotropy = min_point ? 1u : Anisotropy();
-    const GLuint sampler = Sampler(AddressMode(TextureStateValue(stage, tss::kAddressU)),
-                                   AddressMode(TextureStateValue(stage, tss::kAddressV)),
-                                   AddressMode(TextureStateValue(stage, tss::kAddressW)),
-                                   mag_point ? kGlNearest : kGlLinear, min_filter, anisotropy);
+    const GLint wrap_s = AddressMode(TextureStateValue(stage, tss::kAddressU));
+    const GLint wrap_t = AddressMode(TextureStateValue(stage, tss::kAddressV));
+    const GLint wrap_r = AddressMode(TextureStateValue(stage, tss::kAddressW));
+    const GLenum mag_filter = mag_point ? kGlNearest : kGlLinear;
+    // The stage's previous sampler when its parameters are unchanged, so most
+    // draws skip the map (issue #23); sampler objects are never deleted.
+    struct LastSampler
+    {
+        GLint wrap[3] = {};
+        GLenum mag = 0;
+        GLenum min = 0;
+        uint32_t anisotropy = 0;
+        GLuint sampler = 0;
+    };
+    static LastSampler last[globals::kTextureStages];
+    LastSampler& previous = last[stage];
+    if (previous.sampler == 0 || previous.wrap[0] != wrap_s || previous.wrap[1] != wrap_t ||
+        previous.wrap[2] != wrap_r || previous.mag != mag_filter || previous.min != min_filter ||
+        previous.anisotropy != anisotropy)
+    {
+        previous = {{wrap_s, wrap_t, wrap_r}, mag_filter, min_filter, anisotropy,
+                    Sampler(wrap_s, wrap_t, wrap_r, mag_filter, min_filter, anisotropy)};
+    }
+    const GLuint sampler = previous.sampler;
     const GLenum target = texture.kind == SamplerKind::k3D ? kGlTexture3D : kGlTexture2D;
 
     UnitBinding& unit = g_units[stage];

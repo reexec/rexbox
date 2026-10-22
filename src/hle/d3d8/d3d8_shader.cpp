@@ -147,6 +147,10 @@ float g_vertex_constants[kVertexConstantCount][4] = {};
 uint64_t g_vertex_constants_version = 1;
 float g_pixel_constants[kPixelConstantCount][4] = {};
 uint32_t g_pixel_constants_written = 0;  // since the last SetPixelShader
+// Bumped whenever a pixel shader's constants may differ: a constant set, the
+// written bits reset, or a pixel shader created or deleted (its definition
+// may come back at the same host address).
+uint64_t g_pixel_constants_version = 1;
 
 // HRESULT D3DDevice_CreateVertexShader(const DWORD* pDeclaration, const DWORD* pFunction, DWORD* pHandle, DWORD Usage)
 void D3DDevice_CreateVertexShader()
@@ -250,6 +254,7 @@ void D3DDevice_CreatePixelShader()
         std::fprintf(stderr, "%s\n", text.c_str());
     }
     g_pixel_shaders[handle] = std::move(shader);
+    ++g_pixel_constants_version;
     Memory().Write32(out, handle);
     call.Return(kD3dOk, 2);
 }
@@ -259,6 +264,7 @@ void D3DDevice_DeletePixelShader()
 {
     HleCall call;
     g_pixel_shaders.erase(call.Arg(0));
+    ++g_pixel_constants_version;
     call.Return(kD3dOk, 1);
 }
 
@@ -296,6 +302,7 @@ void D3DDevice_SetPixelShaderConstant()
             g_pixel_constants_written |= 1u << (first + i);
         }
     }
+    ++g_pixel_constants_version;
     call.Return(kD3dOk, 3);
 }
 
@@ -333,9 +340,15 @@ uint32_t PixelShaderConstantsWritten()
     return g_pixel_constants_written;
 }
 
+uint64_t PixelShaderConstantsVersion()
+{
+    return g_pixel_constants_version;
+}
+
 void ForgetPixelShaderConstants()
 {
     g_pixel_constants_written = 0;
+    ++g_pixel_constants_version;
 }
 
 void WriteViewportConstants(uint32_t x, uint32_t y, uint32_t width, uint32_t height)

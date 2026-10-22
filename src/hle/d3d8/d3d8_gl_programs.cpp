@@ -256,6 +256,17 @@ bool UniformCache::Changed(int location, const float* values, size_t count)
     return true;
 }
 
+bool UniformCache::SameInputs(uint32_t group, uint64_t first, uint64_t second)
+{
+    Inputs& inputs = groups_[group];
+    if (inputs.valid && inputs.first == first && inputs.second == second)
+    {
+        return true;
+    }
+    inputs = {true, first, second};
+    return false;
+}
+
 void UniformCache::Set1f(int location, float x)
 {
     if (Changed(location, &x, 1))
