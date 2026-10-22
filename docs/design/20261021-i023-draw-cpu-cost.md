@@ -1,6 +1,6 @@
 # 설계: D3D8 그리기 하나의 CPU 비용 (issue #23)
 
-상태: 구현 중(§3.1에서 1을 바꿈). 소비자 측정: reexec/reCT3#17.
+상태: 1차 구현(§3.1에서 1을 바꿈, 4는 하지 않음; [작업 로그](../work-logs/20261021-i023-draw-cpu-cost.md)). 소비자 측정: reexec/reCT3#17.
 
 ## 1. 요구사항
 
@@ -76,7 +76,7 @@ flowchart LR
 
 # Design: the CPU cost of one D3D8 draw (issue #23)
 
-Status: being implemented (item 1 changed in section 3.1). Consumer measurements: reexec/reCT3#17.
+Status: first pass implemented (item 1 changed in section 3.1, item 4 dropped; [work log](../work-logs/20261021-i023-draw-cpu-cost.md)). Consumer measurements: reexec/reCT3#17.
 
 ## 1. Requirement
 
