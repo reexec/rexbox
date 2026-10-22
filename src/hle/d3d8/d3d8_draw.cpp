@@ -972,7 +972,6 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
     lap.Mark(profile::Phase::kSetup);
     BindRenderTarget(state.render_target, state.depth_target);
     lap.Mark(profile::Phase::kTarget);
-    BindDrawVertexArray();
     DrawIndices index_data;
     const bool arrays = indices.address == 0 && primitive != prim::kQuadList;
     if (indices.address != 0)
@@ -1191,6 +1190,7 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
     }
     else
     {
+        BindElementBuffer(index_data);
         gl.DrawElements(mode, static_cast<GLsizei>(index_data.count),
                         index_data.use_short ? kGlUnsignedShort : kGlUnsignedInt,
                         reinterpret_cast<const void*>(index_data.offset));

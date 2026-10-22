@@ -23,13 +23,8 @@ constexpr uint32_t kIdleFrames = 600;
 // (docs/design/20261014-i046-hle-performance.md section 3.2).
 constexpr size_t kTrackedBytes = 8 * 1024;
 
-GLuint g_vertex_array = 0;
-uint32_t g_vertex_array_epoch = 0;
-
-// What the draw vertex array holds per attribute (vertex array state, so it
-// survives other code binding its own arrays). The pointers are forgotten
-// when a buffer is deleted: its name may come back for a new buffer while
-// the array still refers to the old one.
+// What a vertex array object holds per attribute (vertex array state, so it
+// survives other code binding its own arrays).
 struct AttributeState
 {
     bool pointed = false;
@@ -41,15 +36,79 @@ struct AttributeState
     size_t offset = 0;
 };
 constexpr uint32_t kAttributes = 16;
-AttributeState g_attributes[kAttributes];
-uint32_t g_enabled_attributes = 0;  // enable bits the array holds
-uint32_t g_named_attributes = 0;    // named since the last FinishAttributes
 
-void ForgetAttributePointers()
+// A vertex array object and what it holds. Streamed vertices use one array;
+// each cached vertex range has its own, so a range drawn again with the same
+// layout needs no attribute calls (issue #23). The element binding is part
+// of the array; it is trusted only within the GL state epoch it was made in,
+// since other code may bind an element buffer while the array is bound.
+struct VertexArray
 {
-    for (AttributeState& attribute : g_attributes)
+    GLuint name = 0;
+    AttributeState attributes[kAttributes];
+    uint32_t enabled = 0;  // enable bits the array holds
+    GLuint element_buffer = 0;
+    uint32_t element_epoch = 0;
+};
+
+VertexArray g_stream_array;
+VertexArray* g_bound_array = nullptr;
+uint32_t g_bound_epoch = 0;
+uint32_t g_named_attributes = 0;  // named since the last FinishAttributes
+std::vector<VertexArray*> g_arrays;  // every array made, for ForgetBufferBindings
+
+// Binds `array`, making its GL object on first use.
+void BindArray(VertexArray* array)
+{
+    GlFunctions& gl = Gl();
+    if (array->name == 0)
     {
-        attribute.pointed = false;
+        gl.GenVertexArrays(1, &array->name);
+        // A new array has every attribute disabled and unpointed.
+        for (AttributeState& attribute : array->attributes)
+        {
+            attribute.pointed = false;
+        }
+        array->enabled = 0;
+        array->element_epoch = 0;
+        g_arrays.push_back(array);
+    }
+    else if (g_bound_array == array && g_bound_epoch == GlStateEpoch())
+    {
+        return;
+    }
+    gl.BindVertexArray(array->name);
+    g_bound_array = array;
+    g_bound_epoch = GlStateEpoch();
+}
+
+void DeleteArray(VertexArray* array)
+{
+    if (array->name == 0)
+    {
+        return;
+    }
+    Gl().DeleteVertexArrays(1, &array->name);
+    array->name = 0;
+    g_arrays.erase(std::remove(g_arrays.begin(), g_arrays.end(), array), g_arrays.end());
+    if (g_bound_array == array)
+    {
+        g_bound_array = nullptr;
+    }
+}
+
+// A deleted buffer's name may come back for a new buffer while an array
+// still refers to the old one: every array's pointers and element binding
+// are sent again.
+void ForgetBufferBindings()
+{
+    for (VertexArray* array : g_arrays)
+    {
+        for (AttributeState& attribute : array->attributes)
+        {
+            attribute.pointed = false;
+        }
+        array->element_epoch = 0;
     }
 }
 
@@ -75,7 +134,19 @@ struct Binding
 };
 
 Binding g_array_binding{kGlArrayBuffer};
-Binding g_element_binding{kGlElementArrayBuffer};
+// Index data is uploaded through the copy-write target, which belongs to no
+// vertex array; the element binding is made per array before the draw.
+Binding g_index_upload_binding{kGlCopyWriteBuffer};
+
+// Makes `buffer` an element buffer for WebGL 2, which fixes a buffer's kind
+// at its first binding: bound once as the element buffer of the stream array.
+void DeclareElementBuffer(GLuint buffer)
+{
+    BindArray(&g_stream_array);
+    Gl().BindBuffer(kGlElementArrayBuffer, buffer);
+    g_stream_array.element_buffer = buffer;
+    g_stream_array.element_epoch = GlStateEpoch();
+}
 
 // Data appended behind the previous data with glBufferSubData; a full buffer
 // is orphaned (the driver keeps the old storage for draws in flight) and
@@ -92,6 +163,10 @@ public:
         if (buffer_ == 0)
         {
             gl.GenBuffers(1, &buffer_);
+            if (binding_ == &g_index_upload_binding)
+            {
+                DeclareElementBuffer(buffer_);
+            }
         }
         binding_->Bind(buffer_);
         size_t offset = (offset_ + kAlignment - 1) & ~(kAlignment - 1);
@@ -110,6 +185,11 @@ public:
         return offset;
     }
 
+    GLuint buffer() const
+    {
+        return buffer_;
+    }
+
 private:
     static constexpr size_t kInitialBytes = 4u << 20;
     static constexpr size_t kAlignment = 16;  // any attribute type and index size
@@ -120,7 +200,7 @@ private:
 };
 
 StreamBuffer g_vertex_stream(&g_array_binding);
-StreamBuffer g_index_stream(&g_element_binding);
+StreamBuffer g_index_stream(&g_index_upload_binding);
 
 // Guest data and the GL buffer holding its last upload.
 struct CachedRange
@@ -130,6 +210,7 @@ struct CachedRange
     uint32_t last_used = 0;     // frame
     uint64_t write_version = 0; // guest write version when `copy` last matched
     DrawIndices indices;          // index ranges: the prepared result
+    VertexArray array;            // vertex ranges: the array that points at `buffer`
 };
 
 struct IndexKey
@@ -232,8 +313,9 @@ void Sweep(Map* map, uint32_t frame, Binding* binding)
             {
                 binding->epoch = 0;
             }
+            DeleteArray(&it->second.array);
             gl.DeleteBuffers(1, &it->second.buffer);
-            ForgetAttributePointers();
+            ForgetBufferBindings();
             it = map->erase(it);
         }
         else
@@ -245,36 +327,30 @@ void Sweep(Map* map, uint32_t frame, Binding* binding)
 
 }  // namespace
 
-void BindDrawVertexArray()
+void BindElementBuffer(const DrawIndices& indices)
 {
-    GlFunctions& gl = Gl();
-    if (g_vertex_array == 0)
-    {
-        gl.GenVertexArrays(1, &g_vertex_array);
-        // A new array has every attribute disabled and unpointed.
-        ForgetAttributePointers();
-        g_enabled_attributes = 0;
-    }
-    else if (g_vertex_array_epoch == GlStateEpoch())
+    VertexArray* array = g_bound_array;
+    if (array == nullptr || (array->element_epoch == GlStateEpoch() && array->element_buffer == indices.buffer))
     {
         return;
     }
-    gl.BindVertexArray(g_vertex_array);
-    g_vertex_array_epoch = GlStateEpoch();
-    g_element_binding.epoch = 0;  // re-sent with the next index data
+    Gl().BindBuffer(kGlElementArrayBuffer, indices.buffer);
+    array->element_buffer = indices.buffer;
+    array->element_epoch = GlStateEpoch();
 }
 
 void SetAttribute(uint32_t index, int size, uint32_t type, bool normalized, uint32_t stride, size_t offset)
 {
     GlFunctions& gl = Gl();
+    VertexArray& array = *g_bound_array;
     const uint32_t bit = 1u << index;
     g_named_attributes |= bit;
-    if ((g_enabled_attributes & bit) == 0)
+    if ((array.enabled & bit) == 0)
     {
         gl.EnableVertexAttribArray(index);
-        g_enabled_attributes |= bit;
+        array.enabled |= bit;
     }
-    AttributeState& a = g_attributes[index];
+    AttributeState& a = array.attributes[index];
     const GLuint buffer = g_array_binding.buffer;
     if (a.pointed && a.buffer == buffer && a.size == size && a.type == type && a.normalized == normalized &&
         a.stride == stride && a.offset == offset)
@@ -289,7 +365,8 @@ void SetAttribute(uint32_t index, int size, uint32_t type, bool normalized, uint
 void FinishAttributes()
 {
     GlFunctions& gl = Gl();
-    uint32_t unused = g_enabled_attributes & ~g_named_attributes;
+    VertexArray& array = *g_bound_array;
+    uint32_t unused = array.enabled & ~g_named_attributes;
     for (uint32_t index = 0; unused != 0; ++index, unused >>= 1)
     {
         if ((unused & 1) != 0)
@@ -297,7 +374,7 @@ void FinishAttributes()
             gl.DisableVertexAttribArray(index);
         }
     }
-    g_enabled_attributes &= g_named_attributes;
+    array.enabled &= g_named_attributes;
     g_named_attributes = 0;
 }
 
@@ -306,11 +383,13 @@ size_t PrepareVertexData(uint32_t address, size_t bytes, bool cacheable)
     const uint8_t* data = Memory().Translate(address);
     if (!cacheable)
     {
+        BindArray(&g_stream_array);
         profile::CountUpload(bytes, 0);
         return g_vertex_stream.Append(data, bytes);
     }
     CachedRange& range = g_vertex_ranges[(static_cast<uint64_t>(address) << 32) | static_cast<uint32_t>(bytes)];
     const bool unchanged = Unchanged(&range, address, bytes);
+    BindArray(&range.array);
     g_array_binding.Bind(range.buffer);
     if (!unchanged)
     {
@@ -323,6 +402,7 @@ size_t PrepareVertexData(uint32_t address, size_t bytes, bool cacheable)
 
 size_t PrepareHostVertexData(const void* data, size_t bytes)
 {
+    BindArray(&g_stream_array);
     profile::CountUpload(bytes, 0);
     return g_vertex_stream.Append(data, bytes);
 }
@@ -363,6 +443,7 @@ bool PrepareGuestIndices(uint32_t address, uint32_t count, uint32_t base, bool q
         out->count = count;
         out->use_short = true;
         out->offset = g_index_stream.Append(rebased.data(), count * 2);
+        out->buffer = g_index_stream.buffer();
         profile::CountUpload(0, count * 2);
         return true;
     }
@@ -376,7 +457,6 @@ bool PrepareGuestIndices(uint32_t address, uint32_t count, uint32_t base, bool q
             {
                 return false;
             }
-            g_element_binding.Bind(range->buffer);
             *out = range->indices;
             return true;
         }
@@ -409,17 +489,21 @@ bool PrepareGuestIndices(uint32_t address, uint32_t count, uint32_t base, bool q
             return false;
         }
         result.offset = g_index_stream.Append(bytes.data(), bytes.size());
+        result.buffer = g_index_stream.buffer();
         profile::CountUpload(0, bytes.size());
         *out = result;
         return true;
     }
-    range->indices = ok ? result : DrawIndices{};
     if (!ok)
     {
+        range->indices = DrawIndices{};
         return false;
     }
-    g_element_binding.Bind(range->buffer);
-    Gl().BufferData(kGlElementArrayBuffer, static_cast<GLsizeiptr>(bytes.size()), bytes.data(), kGlStaticDraw);
+    result.buffer = range->buffer;
+    range->indices = result;
+    DeclareElementBuffer(range->buffer);
+    g_index_upload_binding.Bind(range->buffer);
+    Gl().BufferData(kGlCopyWriteBuffer, static_cast<GLsizeiptr>(bytes.size()), bytes.data(), kGlStaticDraw);
     profile::CountUpload(0, bytes.size());
     *out = result;
     return true;
@@ -433,6 +517,7 @@ bool PrepareHostIndices(const std::vector<uint32_t>& indices, DrawIndices* out)
         return false;
     }
     out->offset = g_index_stream.Append(bytes.data(), bytes.size());
+    out->buffer = g_index_stream.buffer();
     profile::CountUpload(0, bytes.size());
     return true;
 }
@@ -446,7 +531,7 @@ void EndVertexDataFrame()
     }
     g_last_sweep = frame;
     Sweep(&g_vertex_ranges, frame, &g_array_binding);
-    Sweep(&g_index_ranges, frame, &g_element_binding);
+    Sweep(&g_index_ranges, frame, &g_index_upload_binding);
 }
 
 }  // namespace rexbox::hle::d3d8
