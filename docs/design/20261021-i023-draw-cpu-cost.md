@@ -1,6 +1,6 @@
 # 설계: D3D8 그리기 하나의 CPU 비용 (issue #23)
 
-상태: 설계만(구현 전). 소비자 측정: reexec/reCT3#17.
+상태: 구현 중(§3.1에서 1을 바꿈). 소비자 측정: reexec/reCT3#17.
 
 ## 1. 요구사항
 
@@ -54,7 +54,14 @@ flowchart LR
 
 기대: setup 4.0 → 약 1, constants 2.9 → 약 1, indices 2.0 → 약 0.7, attributes 1.4 → 약 0.5 ms(**추정**). #22와 합치면 바쁜 시간이 약 33 → 약 21 ms로, 이 기계에서 30 fps 고정(게임 0.5배)이 된다. 60 fps(16.7 ms)에는 모자란다.
 
-### 3.1 다음 단계(이번 범위 밖): 렌더 스레드
+### 3.1 구현에서 바꾼 것: 1의 스냅샷 메모 대신
+
+구현 전에 코드를 다시 보니 1을 그대로 하면 그림이 틀릴 수 있다. `ResolveTexture`는 render target을 샘플링하면 그 자리에서 사본을 갱신하고(`SampleRenderTarget`, 앞 사본 뒤에 그 타깃에 그렸으면 복사), 텍스처마다 프레임당 한 번 표본 해시를 본다. 해석을 건너뛰면 이것들이 빠진다. 또 렌더 상태 블록 전체를 스냅샷에 넣으면 키와 무관한 상태(tfactor, alpha ref, fog 색)가 그리기마다 바뀌어 거의 맞지 않을 것이다. 그래서 1을 둘로 나눈다.
+
+* **앞 조회 재사용**: 키는 그리기마다 지금처럼 만들고(텍스처 해석 포함), 프로그램 map 조회에서 키가 앞 조회와 같으면 해시와 탐색 없이 앞 결과를 쓴다. 키가 프로그램 선택의 입력 전부이므로 결과가 같다. map 항목은 지우지 않고 노드 기반이라 포인터가 유지된다.
+* **싼 상태 읽기**: `RenderStateValue`/`TextureStateValue`가 읽을 때마다 `Resolve()`를 두 번, `Memory()`, `RenderStateSlotCount()`를 부르던 것을, 주소를 찾을 때 블록의 호스트 포인터와 슬롯 수를 보관해 load 하나로 한다.
+
+### 3.2 다음 단계(이번 범위 밖): 렌더 스레드
 
 2코어 기계에서 60 fps에는 GL 제출을 타이틀 스레드에서 떼어 내야 한다. 타이틀 스레드는 그리기마다 키·상수·정점 범위(게스트 메모리 사본)를 명령으로 기록하고, 렌더 스레드가 GL을 부른다. 그러면 타이틀 스레드는 lift된 코드(약 9 ms) + 기록(수 ms)이 된다. 게스트 메모리 사본, 렌더 타깃 읽기(lock)와 present의 동기화가 필요한 큰 변경이므로 위의 1~5를 먼저 하고 측정한 뒤 따로 설계한다.
 
@@ -69,7 +76,7 @@ flowchart LR
 
 # Design: the CPU cost of one D3D8 draw (issue #23)
 
-Status: design only (not implemented). Consumer measurements: reexec/reCT3#17.
+Status: being implemented (item 1 changed in section 3.1). Consumer measurements: reexec/reCT3#17.
 
 ## 1. Requirement
 
@@ -112,7 +119,14 @@ Each step lands on its own so it can be measured in its own `REXBOX_D3D8_PROFILE
 
 Expected: setup 4.0 → about 1, constants 2.9 → about 1, indices 2.0 → about 0.7, attributes 1.4 → about 0.5 ms (**inferred**). Together with #22 the busy time goes from about 33 to about 21 ms: a steady 30 fps on this machine (the game at 0.5×), still short of 60 fps (16.7 ms).
 
-### 3.1 Next step (out of scope): a render thread
+### 3.1 Changed in implementation: instead of the snapshot memo of 1
+
+A second look before implementing shows that 1 as written could draw wrong pictures: `ResolveTexture` refreshes a render target's copy on the spot when it is sampled (`SampleRenderTarget` copies when the target was drawn to after the last copy) and checks each texture's sampled hash once per frame, and skipping the resolution skips both. A snapshot of the whole render-state block would also rarely match, since states unrelated to the key (tfactor, alpha ref, fog colour) change from draw to draw. So 1 becomes two pieces:
+
+* **Reuse of the previous lookup**: the key is built on every draw as now (texture resolution included), and the program-map lookup returns the previous result without hashing and searching when the key equals the previous lookup's. The key is the whole input to the program choice, so the result is the same; map entries are never erased and the maps are node based, so the pointer stays valid.
+* **Cheaper state reads**: `RenderStateValue`/`TextureStateValue` called `Resolve()` twice, `Memory()` and `RenderStateSlotCount()` on every read; the blocks' host pointers and the slot count are now kept when the addresses are found, so a read is one load.
+
+### 3.2 Next step (out of scope): a render thread
 
 60 fps on a two-core machine needs GL submission off the title thread: the title thread records each draw's key, constants and vertex ranges (copies of guest memory) as commands and a render thread makes the GL calls, leaving the title thread with the lifted code (about 9 ms) plus recording (a few ms). It needs guest-memory copies and synchronization for render-target reads (locks) and present, a large change, so 1–5 come first, are measured, and the render thread gets its own design.
 

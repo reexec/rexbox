@@ -4,6 +4,7 @@
 #include "d3d8_render_state.h"
 
 #include <atomic>
+#include <cstring>
 
 namespace rexbox::hle::d3d8
 {
@@ -26,6 +27,11 @@ struct Addresses
     GuestAddress render_state = 0;
     GuestAddress texture_state = 0;
     RenderStateLayout layout;  // from the bound block variables, else 4134's
+    // The render-state and texture-state blocks as host memory (null when
+    // outside guest memory), read on every draw (issue #23).
+    uint32_t render_state_slots = 0;
+    const uint8_t* render_state_host = nullptr;
+    const uint8_t* texture_state_host = nullptr;
 };
 
 // Looked up on first use after the title bound its variables; kept once the
@@ -53,6 +59,17 @@ const Addresses& Resolve()
             // stays 0 and its accessors read 0 and drop writes.
             if (found.render_state != 0)
             {
+                runtime::GuestMemory& memory = Memory();
+                found.render_state_slots = RenderStateSlotCount(found.layout);
+                if (memory.IsValid(found.render_state, found.render_state_slots * 4))
+                {
+                    found.render_state_host = memory.Translate(found.render_state);
+                }
+                if (found.texture_state != 0 &&
+                    memory.IsValid(found.texture_state, globals::kTextureStages * globals::kTextureStateSlots * 4))
+                {
+                    found.texture_state_host = memory.Translate(found.texture_state);
+                }
                 addresses = found;
                 resolved.store(true, std::memory_order_release);
             }
@@ -106,8 +123,15 @@ void SetRenderStateSlot(uint32_t slot, uint32_t value)
 
 uint32_t RenderStateValue(uint32_t state)
 {
-    const uint32_t slot = SlotFromLogical(Resolve().layout, state);
-    return slot != kNoRenderState ? RenderStateSlotValue(slot) : 0;
+    const Addresses& addresses = Resolve();
+    const uint32_t slot = SlotFromLogical(addresses.layout, state);
+    if (addresses.render_state_host == nullptr || slot >= addresses.render_state_slots)
+    {
+        return slot != kNoRenderState ? RenderStateSlotValue(slot) : 0;
+    }
+    uint32_t value = 0;
+    std::memcpy(&value, addresses.render_state_host + slot * 4, 4);
+    return value;
 }
 
 void SetRenderStateValue(uint32_t state, uint32_t value)
@@ -121,12 +145,19 @@ void SetRenderStateValue(uint32_t state, uint32_t value)
 
 uint32_t TextureStateValue(uint32_t stage, uint32_t slot)
 {
-    const GuestAddress base = Resolve().texture_state;
-    if (base == 0 || stage >= globals::kTextureStages || slot >= globals::kTextureStateSlots)
+    const Addresses& addresses = Resolve();
+    if (addresses.texture_state == 0 || stage >= globals::kTextureStages || slot >= globals::kTextureStateSlots)
     {
         return 0;
     }
-    return Memory().Read32(base + (stage * globals::kTextureStateSlots + slot) * 4);
+    const uint32_t offset = (stage * globals::kTextureStateSlots + slot) * 4;
+    if (addresses.texture_state_host == nullptr)
+    {
+        return Memory().Read32(addresses.texture_state + offset);
+    }
+    uint32_t value = 0;
+    std::memcpy(&value, addresses.texture_state_host + offset, 4);
+    return value;
 }
 
 void SetTextureStateValue(uint32_t stage, uint32_t slot, uint32_t value)

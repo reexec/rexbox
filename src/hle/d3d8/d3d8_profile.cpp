@@ -52,6 +52,7 @@ Clock::duration g_program_time{};
 uint32_t g_programs_stored = 0;
 Clock::duration g_store_time{};
 uint64_t g_compare_bytes = 0;
+uint64_t g_compares_again = 0;
 uint32_t g_frames = 0;
 Clock::time_point g_window_start;
 Clock::time_point g_last_present;  // the previous EndFrame
@@ -197,13 +198,14 @@ void CountProgramStore(Clock::duration elapsed)
     g_store_time += elapsed;
 }
 
-void CountCompare(size_t bytes)
+void CountCompare(size_t bytes, bool again)
 {
     if (!Enabled() || !t_presenting)
     {
         return;
     }
     ++g_compares;
+    g_compares_again += again ? 1 : 0;
     g_compare_bytes += bytes;
 }
 
@@ -252,7 +254,7 @@ void EndFrame(uint32_t frame)
         return Milliseconds(g_phases[static_cast<size_t>(phase)]) / frames;
     };
     std::fprintf(stderr,
-                 "[d3d8 profile] %.1f fps, %.2f ms/frame, worst %.1f (%u over 33.4), cpu %.2f: draws %.0f (%.0f program), uploads %.0f KiB vertices %.0f KiB indices, compared %.0f KiB in %.0f ranges | indices %.2f setup %.2f "
+                 "[d3d8 profile] %.1f fps, %.2f ms/frame, worst %.1f (%u over 33.4), cpu %.2f: draws %.0f (%.0f program), uploads %.0f KiB vertices %.0f KiB indices, compared %.0f KiB in %.0f ranges (%.0f again) | indices %.2f setup %.2f "
                  "target %.2f upload %.2f attributes %.2f constants %.2f textures %.2f state %.2f draw %.2f present %.2f wait %.2f | "
                  "other %.2f\n",
                  1000.0 / wall, wall, Milliseconds(g_worst_frame), g_slow_frames,
@@ -260,7 +262,7 @@ void EndFrame(uint32_t frame)
                  static_cast<double>(g_draws) / frames,
                  static_cast<double>(g_program_draws) / frames, static_cast<double>(g_vertex_bytes) / frames / 1024.0,
                  static_cast<double>(g_index_bytes) / frames / 1024.0, static_cast<double>(g_compare_bytes) / frames / 1024.0,
-                 static_cast<double>(g_compares) / frames, per_frame(Phase::kIndices), per_frame(Phase::kSetup),
+                 static_cast<double>(g_compares) / frames, static_cast<double>(g_compares_again) / frames, per_frame(Phase::kIndices), per_frame(Phase::kSetup),
                  per_frame(Phase::kTarget), per_frame(Phase::kUpload), per_frame(Phase::kAttributes),
                  per_frame(Phase::kConstants), per_frame(Phase::kTextures), per_frame(Phase::kState),
                  per_frame(Phase::kDraw), per_frame(Phase::kPresent), per_frame(Phase::kWait), wall - measured);
@@ -307,7 +309,7 @@ void EndFrame(uint32_t frame)
     g_phases = {};
     g_draws = g_program_draws = 0;
     g_vertex_bytes = g_index_bytes = 0;
-    g_compares = g_compare_bytes = 0;
+    g_compares = g_compare_bytes = g_compares_again = 0;
     g_frames = 0;
 }
 

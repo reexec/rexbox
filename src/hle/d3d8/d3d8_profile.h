@@ -40,8 +40,9 @@ void Add(Phase phase, std::chrono::steady_clock::duration elapsed);
 void CountDraw(bool program);
 // Bytes sent to GL buffers.
 void CountUpload(size_t vertex_bytes, size_t index_bytes);
-// Guest bytes compared with a cached copy to find out whether they changed.
-void CountCompare(size_t bytes);
+// Guest bytes compared with a cached copy to find out whether they changed;
+// `again` when the same range was already compared in this frame.
+void CountCompare(size_t bytes, bool again);
 // A call into something the HLE does not implement yet, by report site (a
 // string literal); the report gives the calls per frame for each site.
 void CountMissing(const char* site);

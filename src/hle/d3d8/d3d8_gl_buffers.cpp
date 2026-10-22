@@ -162,6 +162,7 @@ bool Unchanged(CachedRange* range, GuestAddress address, size_t bytes)
 {
     runtime::GuestMemory& memory = Memory();
     const uint8_t* data = memory.Translate(address);
+    const bool again = range->last_used == State().frame_count && range->buffer != 0;
     range->last_used = State().frame_count;
     const bool tracked = bytes >= kTrackedBytes && memory.TracksWrites();
     const uint64_t version = tracked ? memory.WriteVersion(address, bytes) : 0;
@@ -175,7 +176,7 @@ bool Unchanged(CachedRange* range, GuestAddress address, size_t bytes)
         {
             return true;
         }
-        profile::CountCompare(bytes);
+        profile::CountCompare(bytes, again);
         if (std::memcmp(range->copy.data(), data, bytes) == 0)
         {
             range->write_version = version;
@@ -336,6 +337,35 @@ bool PrepareGuestIndices(uint32_t address, uint32_t count, uint32_t base, bool q
         return false;
     }
     const uint8_t* data = memory.Translate(address);
+    if (!cacheable && !quads)
+    {
+        // Push-buffer fragments come here once per draw: rebased to their
+        // lowest index in one pass into a buffer kept between draws (what
+        // Convert gives for 16-bit indices, without the 32-bit copies).
+        thread_local std::vector<uint16_t> rebased;
+        rebased.resize(count);
+        uint16_t low = 0xFFFF;
+        uint16_t high = 0;
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            uint16_t index = 0;
+            std::memcpy(&index, data + i * 2, 2);
+            rebased[i] = index;
+            low = std::min(low, index);
+            high = std::max(high, index);
+        }
+        for (uint16_t& index : rebased)
+        {
+            index = static_cast<uint16_t>(index - low);
+        }
+        out->first = static_cast<uint32_t>(low) + base;
+        out->vertex_count = static_cast<uint32_t>(high - low) + 1;
+        out->count = count;
+        out->use_short = true;
+        out->offset = g_index_stream.Append(rebased.data(), count * 2);
+        profile::CountUpload(0, count * 2);
+        return true;
+    }
     CachedRange* range = nullptr;
     if (cacheable)
     {

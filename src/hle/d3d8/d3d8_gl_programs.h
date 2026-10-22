@@ -39,6 +39,10 @@ private:
     // True (and remembered) when `values` differ from what `location` holds.
     bool Changed(int location, const float* values, size_t count);
 
+    // Locations below kIndexed are looked up by index (drivers hand out small
+    // ones; a draw sets about twenty uniforms), the rest by search.
+    static constexpr int kIndexed = 1024;
+    std::vector<std::vector<float>> indexed_;  // empty: never set
     std::vector<Entry> entries_;
     std::vector<float> array_;
     std::vector<uint32_t> chain_;  // per element: where its run of consecutive locations starts
