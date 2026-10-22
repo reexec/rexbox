@@ -744,16 +744,22 @@ bool IsArgbFamily(uint32_t format)
 void SetPixelShaderUniforms(UniformCache& uniforms, const psh::Definition& definition,
                             const CombinerLocations& locations)
 {
-    float c0[psh::kStages][4];
-    float c1[psh::kStages][4];
-    float final_c0[4];
-    float final_c1[4];
-    psh::StageConstants(definition, PixelShaderConstants(), PixelShaderConstantsWritten(), c0, c1, final_c0,
-                        final_c1);
-    uniforms.Set4fv(locations.stage_c0, static_cast<int>(psh::kStages), &c0[0][0]);
-    uniforms.Set4fv(locations.stage_c1, static_cast<int>(psh::kStages), &c1[0][0]);
-    uniforms.Set4fv(locations.final_c0, 1, final_c0);
-    uniforms.Set4fv(locations.final_c1, 1, final_c1);
+    // The combiner constants come from the definition and the pixel-shader
+    // constants only: formed again when either may have changed since this
+    // program last drew (issue #23).
+    if (!uniforms.SameInputs(0, reinterpret_cast<uintptr_t>(&definition), PixelShaderConstantsVersion()))
+    {
+        float c0[psh::kStages][4];
+        float c1[psh::kStages][4];
+        float final_c0[4];
+        float final_c1[4];
+        psh::StageConstants(definition, PixelShaderConstants(), PixelShaderConstantsWritten(), c0, c1, final_c0,
+                            final_c1);
+        uniforms.Set4fv(locations.stage_c0, static_cast<int>(psh::kStages), &c0[0][0]);
+        uniforms.Set4fv(locations.stage_c1, static_cast<int>(psh::kStages), &c1[0][0]);
+        uniforms.Set4fv(locations.final_c0, 1, final_c0);
+        uniforms.Set4fv(locations.final_c1, 1, final_c1);
+    }
     float fog[4];
     ColorToFloats(RenderStateValue(rs::kFogColor), fog);
     uniforms.Set4fv(locations.fog_color, 1, fog);
@@ -972,7 +978,6 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
     lap.Mark(profile::Phase::kSetup);
     BindRenderTarget(state.render_target, state.depth_target);
     lap.Mark(profile::Phase::kTarget);
-    BindDrawVertexArray();
     DrawIndices index_data;
     const bool arrays = indices.address == 0 && primitive != prim::kQuadList;
     if (indices.address != 0)
@@ -1191,6 +1196,7 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
     }
     else
     {
+        BindElementBuffer(index_data);
         gl.DrawElements(mode, static_cast<GLsizei>(index_data.count),
                         index_data.use_short ? kGlUnsignedShort : kGlUnsignedInt,
                         reinterpret_cast<const void*>(index_data.offset));

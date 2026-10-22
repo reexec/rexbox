@@ -29,6 +29,11 @@ public:
     // dropped it); only runs of changed elements are sent. `version` changes
     // whenever `values` may have; an unchanged version skips the comparison.
     void SetArray4(const std::vector<int>& locations, const float* values, uint64_t version);
+    // True when `inputs` equals what group `group` (0..kGroups-1) was last
+    // given, and remembers them otherwise: a caller skips forming uniforms
+    // whose inputs did not change since this program last drew.
+    bool SameInputs(uint32_t group, uint64_t first, uint64_t second);
+    static constexpr uint32_t kGroups = 2;
 
 private:
     struct Entry
@@ -39,7 +44,18 @@ private:
     // True (and remembered) when `values` differ from what `location` holds.
     bool Changed(int location, const float* values, size_t count);
 
+    // Locations below kIndexed are looked up by index (drivers hand out small
+    // ones; a draw sets about twenty uniforms), the rest by search.
+    static constexpr int kIndexed = 1024;
+    std::vector<std::vector<float>> indexed_;  // empty: never set
     std::vector<Entry> entries_;
+    struct Inputs
+    {
+        bool valid = false;
+        uint64_t first = 0;
+        uint64_t second = 0;
+    };
+    Inputs groups_[kGroups];
     std::vector<float> array_;
     std::vector<uint32_t> chain_;  // per element: where its run of consecutive locations starts
     uint64_t array_version_ = 0;

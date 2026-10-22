@@ -44,6 +44,9 @@ const psh::Definition* FindPixelShader(uint32_t handle);
 // (docs/design/20261017-i078-psh-definition-constants.md).
 const float (*PixelShaderConstants())[4];
 uint32_t PixelShaderConstantsWritten();
+// Changes whenever the constants, the written bits or a pixel shader
+// definition may have changed.
+uint64_t PixelShaderConstantsVersion();
 void ForgetPixelShaderConstants();
 
 // Writes the screen-space constants c[58] and c[59] for the viewport, as the

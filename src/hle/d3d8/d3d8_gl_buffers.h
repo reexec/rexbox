@@ -17,19 +17,18 @@
 namespace rexbox::hle::d3d8
 {
 
-// Binds the vertex array object the draws use. Call before preparing data.
-void BindDrawVertexArray();
-
-// The attributes of the draw vertex array object, sent only where they
-// differ from what the previous draw left (enable bits, and per attribute the
-// buffer, format, stride and offset). SetAttribute points `index` at
+// The attributes of the vertex array object the vertex data was prepared
+// in (PrepareVertexData, PrepareHostVertexData), sent only where they differ
+// from what that array holds (enable bits, and per attribute the buffer,
+// format, stride and offset): streamed vertices share one array, and each
+// cached vertex range has its own (issue #23). SetAttribute points `index` at
 // `offset` in the bound array buffer and enables it; FinishAttributes
 // disables the enabled attributes no SetAttribute named since the last call.
 void SetAttribute(uint32_t index, int size, uint32_t type, bool normalized, uint32_t stride, size_t offset);
 void FinishAttributes();
 
-// Puts `bytes` vertex bytes from guest `address` in a GL buffer and binds it
-// as the array buffer. `cacheable` ranges (from a vertex buffer) are kept
+// Puts `bytes` vertex bytes from guest `address` in a GL buffer, binds its
+// vertex array object and binds it as the array buffer. `cacheable` ranges (from a vertex buffer) are kept
 // and reused while the guest bytes stay the same; others are streamed.
 // Returns the data's offset in the bound buffer.
 size_t PrepareVertexData(uint32_t address, size_t bytes, bool cacheable);
@@ -38,8 +37,9 @@ size_t PrepareVertexData(uint32_t address, size_t bytes, bool cacheable);
 // and binds the stream as the array buffer; returns their offset in it.
 size_t PrepareHostVertexData(const void* data, size_t bytes);
 
-// Indices ready for glDrawElements in the bound element buffer, rebased so
-// that vertex `first` is 0.
+// Indices ready for glDrawElements in `buffer`, rebased so that vertex
+// `first` is 0. Preparing them binds no element buffer: BindElementBuffer
+// does, in the vertex array of the draw, after the vertex data.
 struct DrawIndices
 {
     uint32_t first = 0;         // lowest vertex number used
@@ -47,7 +47,11 @@ struct DrawIndices
     uint32_t count = 0;         // indices to draw
     bool use_short = true;      // 16-bit, else 32-bit
     size_t offset = 0;          // in the element buffer
+    uint32_t buffer = 0;        // the GL buffer holding them
 };
+
+// Makes `indices.buffer` the element buffer of the bound vertex array.
+void BindElementBuffer(const DrawIndices& indices);
 
 // `count` 16-bit guest indices at `address`, each plus `base`; quad lists
 // are expanded to triangles. `cacheable` index data (the title's index

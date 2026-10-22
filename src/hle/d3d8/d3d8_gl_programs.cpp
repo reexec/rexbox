@@ -63,6 +63,30 @@ struct FixedPixelKeyHash
 
 std::unordered_map<FixedPixelKey, FixedFunctionProgram, FixedPixelKeyHash> g_fixed_pixel_programs;
 
+// The last program found in one of the maps. Neighbouring draws mostly use
+// the same program, and comparing their key costs less than hashing it and
+// searching (issue #23). Entries are never erased and the maps are node
+// based, so the pointer stays valid.
+template <typename Key, typename Program>
+struct LastFound
+{
+    bool valid = false;
+    Key key{};
+    const Program* program = nullptr;
+
+    bool Matches(const Key& wanted) const
+    {
+        return valid && key == wanted;
+    }
+    const Program* Remember(const Key& found, const Program& entry)
+    {
+        key = found;
+        program = entry.program != 0 ? &entry : nullptr;
+        valid = true;
+        return program;
+    }
+};
+
 CombinerLocations CombinerUniforms(GLuint program)
 {
     GlFunctions& gl = Gl();
@@ -200,6 +224,21 @@ bool UniformCache::Changed(int location, const float* values, size_t count)
     {
         return false;
     }
+    if (location < kIndexed)
+    {
+        if (static_cast<size_t>(location) >= indexed_.size())
+        {
+            indexed_.resize(static_cast<size_t>(location) + 1);
+        }
+        std::vector<float>& held = indexed_[static_cast<size_t>(location)];
+        // Bitwise, so a NaN that stays a NaN is unchanged.
+        if (held.size() == count && std::memcmp(held.data(), values, count * 4) == 0)
+        {
+            return false;
+        }
+        held.assign(values, values + count);
+        return true;
+    }
     for (Entry& entry : entries_)
     {
         if (entry.location == location)
@@ -215,6 +254,17 @@ bool UniformCache::Changed(int location, const float* values, size_t count)
     }
     entries_.push_back({location, std::vector<float>(values, values + count)});
     return true;
+}
+
+bool UniformCache::SameInputs(uint32_t group, uint64_t first, uint64_t second)
+{
+    Inputs& inputs = groups_[group];
+    if (inputs.valid && inputs.first == first && inputs.second == second)
+    {
+        return true;
+    }
+    inputs = {true, first, second};
+    return false;
 }
 
 void UniformCache::Set1f(int location, float x)
@@ -360,10 +410,15 @@ void FillFixedFunctionUniforms(GLuint program, FixedFunctionProgram* out)
 
 const FixedFunctionProgram* GetFixedFunctionProgram(const FixedFunctionKey& key)
 {
+    static LastFound<FixedFunctionKey, FixedFunctionProgram> last;
+    if (last.Matches(key))
+    {
+        return last.program;
+    }
     const auto it = g_programs.find(key);
     if (it != g_programs.end())
     {
-        return it->second.program != 0 ? &it->second : nullptr;
+        return last.Remember(key, it->second);
     }
     const std::string id = key.Serialize();
     FixedFunctionProgram& entry = g_programs[key];
@@ -382,10 +437,15 @@ const FixedFunctionProgram* GetFixedFunctionProgram(const FixedFunctionKey& key)
 const FixedFunctionProgram* GetFixedFunctionPixelProgram(const FixedFunctionKey& key, const psh::Key& pixel_key)
 {
     const FixedPixelKey pair{key, pixel_key};
+    static LastFound<FixedPixelKey, FixedFunctionProgram> last;
+    if (last.Matches(pair))
+    {
+        return last.program;
+    }
     const auto it = g_fixed_pixel_programs.find(pair);
     if (it != g_fixed_pixel_programs.end())
     {
-        return it->second.program != 0 ? &it->second : nullptr;
+        return last.Remember(pair, it->second);
     }
     const std::string id = key.Serialize() + "|" + pixel_key.Serialize();
     FixedFunctionProgram& entry = g_fixed_pixel_programs[pair];
@@ -411,10 +471,15 @@ const FixedFunctionProgram* GetFixedFunctionPixelProgram(const FixedFunctionKey&
 const VertexProgramGl* GetVertexProgram(const ProgramShader& shader, const FixedFunctionKey& fragment_key)
 {
     const PairKey<FixedFunctionKey> key{shader.hash, fragment_key};
+    static LastFound<PairKey<FixedFunctionKey>, VertexProgramGl> last;
+    if (last.Matches(key))
+    {
+        return last.program;
+    }
     const auto it = g_vertex_programs.find(key);
     if (it != g_vertex_programs.end())
     {
-        return it->second.program != 0 ? &it->second : nullptr;
+        return last.Remember(key, it->second);
     }
     char hash[24];
     std::snprintf(hash, sizeof(hash), "vsh%016llX|", static_cast<unsigned long long>(shader.hash));
@@ -447,10 +512,15 @@ const VertexProgramGl* GetVertexProgram(const ProgramShader& shader, const Fixed
 const VertexProgramGl* GetVertexPixelProgram(const ProgramShader& shader, const psh::Key& pixel_key)
 {
     const PairKey<psh::Key> key{shader.hash, pixel_key};
+    static LastFound<PairKey<psh::Key>, VertexProgramGl> last;
+    if (last.Matches(key))
+    {
+        return last.program;
+    }
     const auto it = g_vertex_pixel_programs.find(key);
     if (it != g_vertex_pixel_programs.end())
     {
-        return it->second.program != 0 ? &it->second : nullptr;
+        return last.Remember(key, it->second);
     }
     char hash[24];
     std::snprintf(hash, sizeof(hash), "vsh%016llX|", static_cast<unsigned long long>(shader.hash));
