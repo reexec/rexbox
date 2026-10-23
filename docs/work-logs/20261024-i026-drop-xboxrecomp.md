@@ -1,6 +1,6 @@
 # 작업 로그: xboxrecomp 의존 제거 (issue #26)
 
-작업 지시: [20261024-i026-drop-xboxrecomp](../work-orders/20261024-i026-drop-xboxrecomp.md) · 설계: [20261024-i026-drop-xboxrecomp](../design/20261024-i026-drop-xboxrecomp.md)
+작업 지시: [20261024-i026-drop-xboxrecomp](../work-orders/20261024-i026-drop-xboxrecomp.md) · 설계: [20261024-i026-drop-xboxrecomp](../design/20261024-i026-drop-xboxrecomp.md) · 소비자: nworkers/reJSRF#117, reexec/reCT3#22
 
 ## 한 일
 
@@ -16,10 +16,10 @@
 5. **스크립트(설계 §3.2).** `hle_overrides.py`, `hle_pops.py`, `pointer_targets.py`와 각 `test_*.py`(합성 입력 6개)를 더하고 `regenerate.py`, `check_hle_pops.py`, `find_pointer_targets.py`를 지웠다. 생성되는 `hle_overrides.c`의 머리 주석 두 줄만 바뀌었다(스크립트 이름, `sub_X_gen` → "the lifter's name").
 6. **submodule.** `third_party/xboxrecomp`와 `.gitmodules` 항목을 지웠다. CI(`ci.yml`, `release.yml`)의 Win32 작업에 Python 테스트 단계를 더했다.
 7. **문서(설계 §3.4, §3.5).** `ARCHITECTURE.md`, `README.md`, `AGENTS.md`(레이어·라이선스 규칙), `docs/PROJECT_CHARTER.md`(단계 3), `THIRD_PARTY_NOTICES.md`, `docs/guides/win32-setup-and-build.md`(§5), `docs/kb/external-references.md`, 공개 헤더 주석 두 곳을 고쳤다. `docs/guides/linux-setup-and-build.md`와 `docs/kb/static-recompilation-and-hle.md`는 고칠 내용이 없었다.
-8. **소비자 이식(로컬, 커밋 전).** 두 타이틀에 `rexbox-i026-lifter` 브랜치를 만들고 rexbox submodule을 이 브랜치로 두었다. 고친 것:
+8. **소비자 이식.** 두 타이틀에 issue(reJSRF #117, reCT3 #22)와 브랜치(`i117-lifter-pipeline`, `i022-lifter-pipeline`)를 만들고 rexbox submodule을 이 브랜치로 두었다. 고친 것:
    * 공통 `scripts/recomp/lifter.py`: xboxrecomp 다섯 단계, `functions.json`, `/* ret N */`, `recomp_dispatch.c` 읽기, `sub_%08X` 이름 규칙.
    * `regenerate.py`, `check_hle_pops.py`, `find_pointer_targets.py` wrapper.
-   * CMake: `REXBOX_XBOXRECOMP_DIR`와 `rexbox_check_license` 호출을 지웠다(reJSRF는 `tools/`의 두 곳 포함).
+   * CMake: `REXBOX_XBOXRECOMP_DIR`와 `rexbox_check_license` 호출을 지웠다(reJSRF는 `tools/`의 두 곳 포함). 라이선스 가드는 타이틀로 옮기지 않았다. 타이틀 타깃은 생성 코드와 그 옆의 MIT 헤더만 컴파일하므로, 각 타이틀의 규칙이 "xboxrecomp의 LGPL 파일을 소스 목록에 넣지 않는다"로 바뀌었다.
 9. **사고와 복구.** rexbox의 `third_party/xboxrecomp` 작업 사본을 지우자 reCT3의 `.git/modules/third_party/xboxrecomp`가 깨졌다. 그 저장소가 `objects/info/alternates`로 지운 사본의 객체를 빌려 쓰고 있었기 때문이다. 복구 방법: 같은 커밋(`6376eb8`)을 가진 로컬 클론 `E:/MYWORK/Projects/xboxrecomp`를 alternates로 잠시 가리키고, `git repack -a -d`로 객체를 자기 저장소로 옮긴 뒤 alternates를 지웠다. `fsck --connectivity-only`가 깨끗하다. 다른 alternates는 reCT3의 rexbox submodule → `E:/MYWORK/Projects/rexbox/.git/objects` 하나이며 건드리지 않았다.
 
 ## 검증
@@ -47,7 +47,7 @@
 
 # Work log: removing the xboxrecomp dependency (issue #26)
 
-Work order: [20261024-i026-drop-xboxrecomp](../work-orders/20261024-i026-drop-xboxrecomp.md) · Design: [20261024-i026-drop-xboxrecomp](../design/20261024-i026-drop-xboxrecomp.md)
+Work order: [20261024-i026-drop-xboxrecomp](../work-orders/20261024-i026-drop-xboxrecomp.md) · Design: [20261024-i026-drop-xboxrecomp](../design/20261024-i026-drop-xboxrecomp.md) · Consumers: nworkers/reJSRF#117, reexec/reCT3#22
 
 ## Done
 
@@ -63,10 +63,10 @@ Work order: [20261024-i026-drop-xboxrecomp](../work-orders/20261024-i026-drop-xb
 5. **Scripts (design 3.2).** Added `hle_overrides.py`, `hle_pops.py` and `pointer_targets.py`, with `test_*.py` for each (6 synthetic tests). Deleted `regenerate.py`, `check_hle_pops.py` and `find_pointer_targets.py`. Only the two header comment lines of the generated `hle_overrides.c` changed: the script name, and `sub_X_gen` became "the lifter's name".
 6. **Submodule.** Removed `third_party/xboxrecomp` and its `.gitmodules` entry. Added a Python test step to the Win32 jobs of CI (`ci.yml`, `release.yml`).
 7. **Documents (design 3.4, 3.5).** Updated `ARCHITECTURE.md`, `README.md`, `AGENTS.md` (layer and license rules), `docs/PROJECT_CHARTER.md` (stage 3), `THIRD_PARTY_NOTICES.md`, `docs/guides/win32-setup-and-build.md` (section 5), `docs/kb/external-references.md` and two public header comments. `docs/guides/linux-setup-and-build.md` and `docs/kb/static-recompilation-and-hle.md` needed nothing.
-8. **Consumer ports (local, not committed).** Both titles got a `rexbox-i026-lifter` branch with their rexbox submodule on this branch. Changes:
+8. **Consumer ports.** Both titles got an issue (reJSRF #117, reCT3 #22) and a branch (`i117-lifter-pipeline`, `i022-lifter-pipeline`) with their rexbox submodule on this branch. Changes:
    * A shared `scripts/recomp/lifter.py`: the five xboxrecomp steps, reading `functions.json`, `/* ret N */` and `recomp_dispatch.c`, and the `sub_%08X` naming.
    * The `regenerate.py`, `check_hle_pops.py` and `find_pointer_targets.py` wrappers.
-   * CMake: no `REXBOX_XBOXRECOMP_DIR`, no `rexbox_check_license` calls (reJSRF also had two in `tools/`).
+   * CMake: no `REXBOX_XBOXRECOMP_DIR`, no `rexbox_check_license` calls (reJSRF also had two in `tools/`). The license guard was not moved into the titles: their targets compile only the generated code and the MIT header next to it, so each title's rule became "xboxrecomp's LGPL files never go into a source list".
 9. **Incident and repair.** Deleting rexbox's `third_party/xboxrecomp` checkout broke reCT3's `.git/modules/third_party/xboxrecomp`, which borrowed that checkout's objects through `objects/info/alternates`. The repair: point the alternates for a moment at the local clone `E:/MYWORK/Projects/xboxrecomp`, which has the same commit (`6376eb8`); `git repack -a -d` to copy the objects into the repository itself; then delete the alternates. `fsck --connectivity-only` is clean. The only other alternates (reCT3's rexbox submodule → `E:/MYWORK/Projects/rexbox/.git/objects`) were left as they are.
 
 ## Verification
