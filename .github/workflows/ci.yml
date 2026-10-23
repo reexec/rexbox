@@ -2,7 +2,8 @@ name: CI
 
 # The fast gate (docs/design/20261020-i002-github-actions.md): every push to
 # main and every pull request configures the library, builds it with its
-# tools, and runs the unit tests (the probes, through CTest). rexbox holds no
+# tools, and runs the unit tests (the probes, through CTest, and the
+# recompilation helpers' Python tests). rexbox holds no
 # game data, so this is the whole library.
 on:
   push:
@@ -35,7 +36,6 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
         with:
-          # rexbox_recomp compiles against xboxrecomp's pinned ABI header;
           # SDL, imgui, smaa and XbSymbolDatabase are built from source.
           submodules: true
 
@@ -46,6 +46,10 @@ jobs:
       - name: Unit tests (CTest)
         shell: powershell
         run: ctest --test-dir build\win32_x86 -C ${{ matrix.configuration }} --output-on-failure
+
+      - name: Recompilation helper tests (Python)
+        shell: powershell
+        run: python -m unittest discover -s scripts/recomp -p "test_*.py"
 
   linux:
     name: Linux ${{ matrix.arch }} ${{ matrix.configuration }} build and tests

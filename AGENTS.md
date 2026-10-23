@@ -183,7 +183,8 @@ If the requirement is a simple question or confirmation request, answer it direc
 * HLE 모듈(`src/hle/<module>/`)은 런타임만 링크하고 다른 HLE 모듈을 링크하지 않는다. 모듈 사이에 공유가 필요하면 런타임 계약으로 올린다.
 * 타이틀 코드(재컴파일·디컴파일 코드)는 HLE 모듈을 직접 부르지 않는다. HLE는 `HleRegistry`의 바인딩(게스트 주소 → HLE export)과 생성된 override(`rexbox_hle_enter`)를 통해서만 연결된다.
 * 플랫폼 계층은 런타임과 타이틀의 타입을 알지 못한다. 기본 값(주소, 크기, 버퍼, 콜백)으로만 호출된다.
-* `rexbox_recomp`만 lifter의 ABI 헤더(`recomp_types.h`)를 안다. lifter 버전이 바뀌면 이 타깃만 바뀐다.
+* lifter(체크아웃, 파이프라인, 출력 형식)는 타이틀의 것이다. rexbox는 lifter를 가지지도, 실행하지도, 그 출력을 읽지도 않는다. `scripts/recomp/`의 보조 함수는 타이틀이 lifter 출력에서 뽑은 평범한 데이터만 받는다.
+* `src/recomp/recomp_abi.c`만 lifter의 ABI 헤더(`recomp_types.h`)를 include한다. 이 파일은 타이틀의 생성 코드와 함께, 그 생성 코드 옆의 헤더로 컴파일된다(`rexbox_add_recompiled_library`). 생성 코드가 부르는 lifter 이름의 콜백은 모두 이 파일에 껍데기로 두고 본체는 `rexbox_bridge_*`(`recomp_callbacks.h`)로 넘긴다.
 
 ## Layer and Dependency Rules
 
@@ -192,7 +193,8 @@ If the requirement is a simple question or confirmation request, answer it direc
 * An HLE module (`src/hle/<module>/`) links the runtime only, never another HLE module. Anything modules must share moves up into a runtime contract.
 * Title code (recompiled and decompiled) never calls an HLE module directly. HLE is reached only through `HleRegistry` bindings (guest address → HLE export) and the generated overrides (`rexbox_hle_enter`).
 * The platform layer knows none of the runtime's or the title's types. It is called with plain values (addresses, sizes, buffers, callbacks).
-* Only `rexbox_recomp` knows the lifter's ABI header (`recomp_types.h`); a lifter upgrade changes that target alone.
+* The lifter (its checkout, pipeline and output formats) is the title's. rexbox neither holds it, runs it, nor reads its output; the helpers in `scripts/recomp/` take only plain data the title extracted from the lifter's output.
+* Only `src/recomp/recomp_abi.c` includes the lifter's ABI header (`recomp_types.h`). It compiles with a title's generated code, against the header next to that code (`rexbox_add_recompiled_library`). Every callback the generated code calls under the lifter's names is a shell in that file, forwarding to its body under `rexbox_bridge_*` (`recomp_callbacks.h`).
 
 ---
 
@@ -236,21 +238,21 @@ If the requirement is a simple question or confirmation request, answer it direc
 
 * 프로젝트 라이선스는 `MIT License`다.
 * 서드파티 오픈소스는 MIT, BSD, zlib, ISC, Apache-2.0, Boost 같은 허용적 라이선스만 빌드에 포함한다.
-* GPL, LGPL, AGPL 같은 전염성 라이선스의 코드는 컴파일·링크하지 않고 저장소에 복사하지도 않는다. `cmake/rexbox_license.cmake`의 `REXBOX_COPYLEFT_PATHS` 가드가 xboxrecomp의 LGPL 파일을 막는다(소비자가 지정한 xboxrecomp 체크아웃에도 적용된다).
+* GPL, LGPL, AGPL 같은 전염성 라이선스의 코드는 컴파일·링크하지 않고 저장소에 복사하지도 않는다. LGPL 파일을 가진 xboxrecomp 체크아웃은 타이틀 프로젝트에 있으므로, 그 파일을 막는 가드도 타이틀의 것이다.
 * 전염성 라이선스 프로젝트(xemu, Cxbx-Reloaded 등)는 동작을 이해하는 지식 출처로만 참고하고, 코드를 옮기지 않는다.
 * 라이선스가 명시되지 않았거나 LLM 기여를 금지한 프로젝트의 코드는 가져오지 않는다. 공개 문서의 사실은 출처를 달아 참고할 수 있다.
 * 서드파티 코드를 가져오면 같은 작업에서 `THIRD_PARTY_NOTICES.md`를 갱신한다. 예외가 필요하면 먼저 문서화하고 사용자 확인을 받는다.
-* 가져온 서드파티 코드에서 문제(버그, 이식성)를 찾으면 우리 사본만 고치지 않고 업스트림에 기여한다. 특히 같은 호스트 계층을 쓰는 [reexec/re2DJ](https://github.com/reexec/re2DJ)(BSD-3-Clause)는 필요할 때 참고하고, 얻어온 코드의 수정은 re2DJ에 되돌려 보낸다. xboxrecomp의 문제는 [sp00nznet/xboxrecomp](https://github.com/sp00nznet/xboxrecomp)에 PR로 낸다.
+* 가져온 서드파티 코드에서 문제(버그, 이식성)를 찾으면 우리 사본만 고치지 않고 업스트림에 기여한다. 특히 같은 호스트 계층을 쓰는 [reexec/re2DJ](https://github.com/reexec/re2DJ)(BSD-3-Clause)는 필요할 때 참고하고, 얻어온 코드의 수정은 re2DJ에 되돌려 보낸다. lifter(xboxrecomp)의 문제는 그것을 고정한 타이틀 프로젝트가 다룬다.
 
 ## License Rules
 
 * The project license is the `MIT License`.
 * Only permissively licensed third-party code (MIT, BSD, zlib, ISC, Apache-2.0, Boost, ...) is built into the project.
-* Copyleft code (GPL, LGPL, AGPL) is neither compiled, linked, nor copied into the repository. The `REXBOX_COPYLEFT_PATHS` guard in `cmake/rexbox_license.cmake` blocks xboxrecomp's LGPL files (in a consumer's own xboxrecomp checkout too).
+* Copyleft code (GPL, LGPL, AGPL) is neither compiled, linked, nor copied into the repository. The xboxrecomp checkout with its LGPL files lives in the title projects, and so does the guard against those files.
 * Copyleft projects (xemu, Cxbx-Reloaded, ...) are consulted only as sources of knowledge about behavior; their code is not carried over.
 * Do not take code from projects with no stated license or that forbid LLM contributions. Facts from their public documents may be used with attribution.
 * When bringing in third-party code, update `THIRD_PARTY_NOTICES.md` in the same task. If an exception is needed, document it and confirm with the user first.
-* When a problem (a bug, a portability issue) is found in third-party code we took, contribute the fix upstream instead of fixing only our copy. In particular, consult [reexec/re2DJ](https://github.com/reexec/re2DJ) (BSD-3-Clause), which shares our host layer, when useful, and send fixes to code taken from it back to re2DJ. Problems in xboxrecomp go to [sp00nznet/xboxrecomp](https://github.com/sp00nznet/xboxrecomp) as pull requests.
+* When a problem (a bug, a portability issue) is found in third-party code we took, contribute the fix upstream instead of fixing only our copy. In particular, consult [reexec/re2DJ](https://github.com/reexec/re2DJ) (BSD-3-Clause), which shares our host layer, when useful, and send fixes to code taken from it back to re2DJ. Problems in the lifter (xboxrecomp) are handled by the title project that pins it.
 
 ---
 

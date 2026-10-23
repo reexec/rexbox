@@ -51,19 +51,19 @@ A title project's game logic is carried by code mechanically lifted from the ori
 ```mermaid
 flowchart LR
     A["1. Split from reJSRF<br/>(issue #1)"] --> B["2. Two consumers<br/>reJSRF, reCT3"]
-    B --> C["3. Upstream xboxrecomp<br/>for every consumer"]
+    B --> C["3. rexbox independent<br/>of the lifter (issue #26)"]
     C --> D["4. Other platforms<br/>Win64, Linux, Web, Android"]
     B --> E["Ongoing: HLE coverage<br/>driven by the titles"]
 ```
 
 1. 분리: reJSRF의 rexbox 부분을 이력과 함께 떼어내 독립 라이브러리로 만든다.
 2. 소비자 둘: reCT3가 처음부터 submodule로 쓰고, reJSRF가 뒤따라 전환한다.
-3. 모든 소비자가 업스트림 xboxrecomp를 쓴다(reJSRF의 fork 수정이 업스트림에 머지된 뒤).
+3. rexbox가 lifter에서 독립한다(issue #26): xboxrecomp 체크아웃과 파이프라인은 타이틀이 가지고, rexbox는 lifter ABI의 런타임 쪽만 구현한다. 어느 lifter(upstream, fork)를 쓸지는 각 타이틀이 정한다.
 4. Win64, Linux, Web, Android로 확장한다. HLE 범위는 타이틀이 필요로 하는 만큼 계속 넓힌다.
 
 ## Stages
 
 1. Split: take reJSRF's rexbox part out with its history as a standalone library.
 2. Two consumers: reCT3 uses the submodule from the start; reJSRF follows.
-3. Every consumer on upstream xboxrecomp (once reJSRF's fork fixes are merged upstream).
+3. rexbox independent of the lifter (issue #26): the xboxrecomp checkout and the pipeline belong to the titles, and rexbox implements only the runtime side of the lifter ABI. Each title picks its lifter (upstream or a fork).
 4. Widen to Win64, Linux, the web and Android. HLE coverage keeps growing as the titles need it.

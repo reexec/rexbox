@@ -1,9 +1,12 @@
-/* Definitions of the state recompiled code declares extern.
+/* Definitions of everything recompiled code declares extern: its CPU state
+ * and the callbacks it calls.
  *
- * Compiled against the pinned xboxrecomp template header (the same file the
- * lifter copies next to the generated code), so every definition matches its
- * declaration exactly. Functions the contract declares are implemented in
- * recomp_bridge.cpp. */
+ * The only rexbox file that includes the lifter's ABI header. It is compiled
+ * with each title's generated code (rexbox_add_recompiled_library), against
+ * the recomp_types.h the lifter wrote next to that code, so every definition
+ * here is checked against the declaration the generated code uses. The
+ * callbacks only forward to their bodies in recomp_bridge.cpp
+ * (recomp_callbacks.h). */
 
 /* The MMX register type is only declared for generated code, which also maps
  * bare register names (eax, ...) to the globals. Take the declarations and
@@ -19,6 +22,7 @@
 #undef edi
 
 #include "rexbox/recomp/recomp_abi.h"
+#include "recomp_callbacks.h"
 
 #include <string.h>
 
@@ -186,4 +190,106 @@ uint32_t rexbox_recomp_last_icall(void)
         return 0;
     }
     return g_icall_trace[(g_icall_trace_idx - 1) & (ICALL_TRACE_SIZE - 1)];
+}
+
+/* The callbacks. Each one the header declares is checked against it here; a
+ * declaration that exists only in some builds (recomp_abi_violation_log under
+ * RECOMP_ABI_CHECK, recomp_call_profile_hit under RECOMP_CALL_PROFILE) is
+ * checked in those builds. recomp_unresolved_stub_log is called by code
+ * lifted with RECOMP_STUB_REPORT, which a lifter may declare in the generated
+ * code instead of the header. */
+
+recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
+{
+    return rexbox_bridge_lookup_manual(xbox_va);
+}
+
+recomp_func_t recomp_lookup_kernel(uint32_t xbox_va)
+{
+    return rexbox_bridge_lookup_kernel(xbox_va);
+}
+
+void recomp_abi_violation_log(uint32_t va, uint32_t ebx0, uint32_t esi0, uint32_t edi0, uint32_t esp0)
+{
+    rexbox_bridge_abi_violation(va, ebx0, esi0, edi0, esp0);
+}
+
+void recomp_call_profile_hit(uint32_t va)
+{
+    rexbox_bridge_call_profile_hit(va);
+}
+
+void recomp_icall_fail_log(uint32_t va)
+{
+    rexbox_bridge_icall_fail(va);
+}
+
+void recomp_unresolved_stub_log(uint32_t va)
+{
+    rexbox_bridge_unresolved_stub(va);
+}
+
+void recomp_icall_not_code_log(uint32_t va)
+{
+    rexbox_bridge_icall_not_code(va);
+}
+
+void recomp_unimpl(const char* text, uint32_t va)
+{
+    rexbox_bridge_unimpl(text, va);
+}
+
+void recomp_debug_service(uint32_t service, uint32_t arg_va)
+{
+    rexbox_bridge_debug_service(service, arg_va);
+}
+
+void xbox_GuestCpuPreempt(uint32_t va)
+{
+    rexbox_bridge_guest_cpu_preempt(va);
+}
+
+void xbox_Cpuid(uint32_t leaf, uint32_t subleaf, uint32_t out[4])
+{
+    rexbox_bridge_cpuid(leaf, subleaf, out);
+}
+
+uint32_t xbox_PortIn(uint32_t port, int width)
+{
+    return rexbox_bridge_port_in(port, width);
+}
+
+void xbox_PortOut(uint32_t port, uint32_t value, int width)
+{
+    rexbox_bridge_port_out(port, value, width);
+}
+
+uint64_t xbox_ReadTimeStampCounter(void)
+{
+    return rexbox_bridge_read_tsc();
+}
+
+void recomp_trace_enter(const char* name, uint32_t va)
+{
+    rexbox_bridge_trace_enter(name, va);
+}
+
+void recomp_trace_exit(const char* name, uint32_t va)
+{
+    rexbox_bridge_trace_exit(name, va);
+}
+
+void recomp_trace_esp(const char* name, const char* tag)
+{
+    rexbox_bridge_trace_esp(name, tag);
+}
+
+jmp_buf* recomp_setjmp_slot(uint32_t buf_va)
+{
+    return (jmp_buf*)rexbox_bridge_setjmp_slot(buf_va);
+}
+
+int recomp_guest_longjmp(uint32_t buf_va, uint32_t value)
+{
+    return rexbox_bridge_guest_longjmp(buf_va, value);
 }

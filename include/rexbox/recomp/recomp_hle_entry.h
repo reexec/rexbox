@@ -1,8 +1,8 @@
 /* Entry into the HLE from a generated override of an XDK library function.
  *
- * scripts/recomp/regenerate.py writes, for every identified function of a
- * library chosen for HLE, a definition of the function's lifted symbol that
- * calls rexbox_hle_enter with a static slot. The first call resolves the HLE
+ * scripts/recomp/hle_overrides.py, called by a title's pipeline, writes for
+ * every identified function of a library chosen for HLE a definition of the
+ * function's lifted symbol that calls rexbox_hle_enter with a static slot. The first call resolves the HLE
  * export of the same name; with none, the run stops and reports the function
  * (docs/design/20261012-i006-xdk-symbol-binding.md). */
 

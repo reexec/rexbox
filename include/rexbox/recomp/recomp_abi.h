@@ -1,9 +1,9 @@
 /* Recompiled-code ABI: the runtime side, callable from C and C++.
  *
- * Generated code (xboxrecomp's recomp_types.h contract) keeps the guest CPU
+ * Generated code (the lifter's recomp_types.h contract) keeps the guest CPU
  * state in per-thread globals. This header is the only way the rest of the
- * runtime reads or sets that state, so nothing outside rexbox_recomp depends
- * on the lifter's variable names. */
+ * runtime reads or sets that state, so nothing but src/recomp/recomp_abi.c,
+ * which defines these functions, depends on the lifter's variable names. */
 
 #ifndef REXBOX_RECOMP_RECOMP_ABI_H
 #define REXBOX_RECOMP_RECOMP_ABI_H

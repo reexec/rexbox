@@ -55,7 +55,7 @@ flowchart TB
   * 생성 코드와 `recomp_abi.c`가 같은 헤더 파일로 컴파일되므로 둘이 어긋날 수 없다. 그래서 체크아웃 헤더와의 SHA256 비교는 지운다.
   * `recomp_abi.c`는 rexbox 코드이므로 생성 코드의 `/w` 대신 rexbox의 엄격한 경고(`rexbox_strict_warnings`)와 `/wd4310`(upstream 헤더의 x87 상수 캐스트)로 컴파일한다. 방법은 `<target>`과 별도의 작은 타깃이나 소스별 옵션이다. 구현에서 링크 순환(아래)과 함께 정한다.
 * **lifter ABI에 닿는 심볼을 모두 `recomp_abi.c`에 모은다.** 지금 `recomp_bridge.cpp`는 헤더를 include하지 않은 채 생성 코드가 부르는 콜백을 `extern "C"`로 직접 정의한다. 대상은 `recomp_lookup_manual`, `recomp_lookup_kernel`, `recomp_icall_fail_log`, `recomp_icall_not_code_log`, `recomp_unresolved_stub_log`, `recomp_unimpl`, `recomp_debug_service`, `recomp_abi_violation_log`, `recomp_call_profile_hit`, `xbox_Cpuid`, `xbox_PortIn`/`xbox_PortOut`, `xbox_ReadTimeStampCounter`, `xbox_GuestCpuPreempt`, `recomp_trace_*`, `recomp_setjmp_slot`, `recomp_guest_longjmp`이다. 그래서 lifter가 콜백 시그니처를 바꿔도 컴파일러가 잡지 못한다. C 링크는 이름만 맞으면 붙고, 어긋남은 실행 중에야 드러난다.
-  * 이 콜백들의 `extern "C"` 껍데기를 `recomp_abi.c`로 옮긴다. 껍데기는 인자를 rexbox 자신의 시그니처를 가진 C++ 브리지 함수로 넘기기만 하고, 본체(HLE 조회, 멈춤, 진단)는 `recomp_bridge.cpp`에 그대로 둔다. 브리지 함수 선언은 `src/recomp/recomp_bridge.h`(C에서도 include할 수 있는 부분)에 둔다.
+  * 이 콜백들의 `extern "C"` 껍데기를 `recomp_abi.c`로 옮긴다. 껍데기는 인자를 rexbox 자신의 시그니처를 가진 C++ 브리지 함수로 넘기기만 하고, 본체(HLE 조회, 멈춤, 진단)는 `recomp_bridge.cpp`에 그대로 둔다. 브리지 함수(`rexbox_bridge_*`)는 C에서도 include할 수 있는 내부 헤더 `src/recomp/recomp_callbacks.h`에 선언한다.
   * 그러면 lifter ABI에 닿는 정의가 모두 실제 헤더로 컴파일되는 한 파일에 모인다. 타이틀이 lifter를 바꿨을 때 헤더가 선언한 콜백의 시그니처가 어긋나면 컴파일 에러가 난다.
   * 헤더가 선언하지 않는 콜백(예: fork에만 있는 `recomp_unresolved_stub_log`)도 껍데기를 정의한다. upstream이든 fork든 같은 rexbox로 링크된다. 선언이 없으니 이것들만은 컴파일러가 확인하지 못한다.
   * `rexbox_hle_enter`는 rexbox 계약(`recomp_hle_entry.h`)이라 lifter ABI가 아니므로 `recomp_bridge.cpp`에 남는다.
@@ -113,7 +113,7 @@ flowchart TB
 | `RECOMP_ICALL_FEEDBACK`용 include 경로 삭제 | 그 기능을 쓰는 타이틀만 자기 체크아웃의 `src/kernel`을 더한다(지금 둘 다 안 쓴다). |
 | `scripts/recomp/regenerate.py` 삭제 | 파이프라인을 자기 `scripts/recomp/regenerate.py`로 옮긴다. rexbox의 `hle_overrides`, `xbe_variant`를 import한다. |
 | `check_hle_pops.py`, `find_pointer_targets.py` 삭제 | lifter 출력 읽기를 자기 wrapper로 옮긴다. rexbox의 `hle_pops`, `pointer_targets`를 import한다. |
-| 라이선스 가드 삭제 | 원하면 `REXBOX_COPYLEFT_PATHS` 가드를 자기 CMake로 옮긴다. |
+| 라이선스 가드 삭제(`rexbox_check_license`, `REXBOX_COPYLEFT_PATHS`) | `rexbox_check_license(...)` 호출을 지우거나, 원하면 가드를 자기 CMake로 옮겨 그것을 부른다. 두 타이틀 모두 지금 이 함수를 부르므로 지우지 않으면 configure가 실패한다. |
 
 **생성 코드 재생성은 필요 없다.** ABI도, `hle_overrides.c`의 내용도 바뀌지 않는다. 그래도 옮긴 파이프라인을 검증하기 위해 한 번 재생성하고, 이전 출력과 바이트 단위로 같은지 비교한다.
 
@@ -196,7 +196,7 @@ The diagram above shows the split.
   * The generated code and `recomp_abi.c` compile against the same header file and cannot disagree, so the SHA256 comparison with a checkout's header goes away.
   * `recomp_abi.c` is rexbox code. It keeps rexbox's strict warnings (`rexbox_strict_warnings`) plus `/wd4310` (the upstream header's x87 constant casts) rather than the generated code's `/w`. Whether through a small separate target or per-source options is decided in implementation, together with the link cycle below.
 * **Every symbol that touches the lifter ABI moves into `recomp_abi.c`.** Today `recomp_bridge.cpp` defines the callbacks generated code calls as `extern "C"` without including the header: `recomp_lookup_manual`, `recomp_lookup_kernel`, `recomp_icall_fail_log`, `recomp_icall_not_code_log`, `recomp_unresolved_stub_log`, `recomp_unimpl`, `recomp_debug_service`, `recomp_abi_violation_log`, `recomp_call_profile_hit`, `xbox_Cpuid`, `xbox_PortIn`/`xbox_PortOut`, `xbox_ReadTimeStampCounter`, `xbox_GuestCpuPreempt`, `recomp_trace_*`, `recomp_setjmp_slot` and `recomp_guest_longjmp`. If the lifter changes a callback's signature, no compiler notices: C links by name alone, and the mismatch only shows at run time.
-  * The `extern "C"` shells of these callbacks move to `recomp_abi.c`. A shell only forwards to a C++ bridge function with rexbox's own signature; the bodies (HLE lookup, stops, diagnostics) stay in `recomp_bridge.cpp`. The bridge functions are declared in `src/recomp/recomp_bridge.h`, in a part C can include.
+  * The `extern "C"` shells of these callbacks move to `recomp_abi.c`. A shell only forwards to a C++ bridge function with rexbox's own signature; the bodies (HLE lookup, stops, diagnostics) stay in `recomp_bridge.cpp`. The bridge functions (`rexbox_bridge_*`) are declared in `src/recomp/recomp_callbacks.h`, an internal header C can include.
   * Every definition that touches the lifter ABI is then in one file compiled against the real header. When a title changes lifters, a callback whose declared signature no longer matches fails to compile.
   * Callbacks the header does not declare (for example `recomp_unresolved_stub_log`, which only the fork has) get shells as well, so the same rexbox links with upstream or the fork. Having no declaration, these alone go unchecked.
   * `rexbox_hle_enter` belongs to rexbox's contract (`recomp_hle_entry.h`), not the lifter ABI, and stays in `recomp_bridge.cpp`.
@@ -254,7 +254,7 @@ A public contract changes (AGENTS.md principle 7). The release notes say:
 | The include path for `RECOMP_ICALL_FEEDBACK` removed | Only a title using the feature adds its checkout's `src/kernel` (neither does today). |
 | `scripts/recomp/regenerate.py` removed | Move the pipeline into the title's own `scripts/recomp/regenerate.py`, importing rexbox's `hle_overrides` and `xbe_variant`. |
 | `check_hle_pops.py`, `find_pointer_targets.py` removed | Move the lifter-output reading into the title's wrappers, importing rexbox's `hle_pops` and `pointer_targets`. |
-| License guard removed | Move the `REXBOX_COPYLEFT_PATHS` guard into the title's CMake if wanted. |
+| License guard removed (`rexbox_check_license`, `REXBOX_COPYLEFT_PATHS`) | Delete the `rexbox_check_license(...)` calls, or move the guard into the title's CMake and call that. Both titles call the function today, so configure fails until they do. |
 
 **No regeneration is needed:** neither the ABI nor the content of `hle_overrides.c` changes. To verify the moved pipeline, regenerate once anyway and compare with the previous output byte for byte.
 

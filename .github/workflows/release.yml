@@ -49,6 +49,10 @@ jobs:
         shell: powershell
         run: ctest --test-dir build\win32_x86 -C ${{ matrix.configuration }} --output-on-failure
 
+      - name: Recompilation helper tests (Python)
+        shell: powershell
+        run: python -m unittest discover -s scripts/recomp -p "test_*.py"
+
   verify-linux:
     name: Verify the tag (Linux ${{ matrix.arch }} ${{ matrix.configuration }})
     runs-on: ubuntu-24.04

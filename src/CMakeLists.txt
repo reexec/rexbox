@@ -21,28 +21,16 @@ add_library(rexbox_runtime STATIC
 )
 target_link_libraries(rexbox_runtime PUBLIC rexbox_xbe rexbox_platform)
 
-# Recompiled-code ABI adapter: the only code tied to the lifter's ABI
-# (xboxrecomp's recomp_types.h). A lifter upgrade changes this target alone.
+# Recompiled-code adapter: the bridge from generated code to the runtime and
+# the executor that runs guest threads. It does not include the lifter's ABI
+# header; recomp/recomp_abi.c, the one file that does, is compiled with each
+# title's generated code (cmake/rexbox_recomp.cmake), and the register
+# accessors it defines (include/rexbox/recomp/recomp_abi.h) resolve there.
 add_library(rexbox_recomp STATIC
-    recomp/recomp_abi.c
     recomp/recomp_bridge.cpp
     recomp/recomp_runtime.cpp
 )
-target_include_directories(rexbox_recomp PRIVATE "${REXBOX_XBOXRECOMP_DIR}/templates/runtime")
-if(MSVC)
-    # recomp_abi.c includes the lifter's header as upstream wrote it; its
-    # constant casts (C4310, upstream v0.15.0's x87 helpers) are not ours to
-    # change, and the file is compiled at /W4 like the rest of rexbox.
-    target_compile_options(rexbox_recomp PRIVATE /wd4310)
-endif()
 target_link_libraries(rexbox_recomp PUBLIC rexbox_runtime)
-# The fork's SSE2 intrinsics for the XMM helpers are opt-in: by default every
-# target that includes recomp_types.h gets the plain C helpers (the upstream
-# design), so performance work stays on the HLE side until they are needed.
-option(REXBOX_RECOMP_XMM_SSE2 "Build the recompiled code's XMM helpers with SSE2 intrinsics" OFF)
-if(NOT REXBOX_RECOMP_XMM_SSE2)
-    target_compile_definitions(rexbox_recomp PUBLIC RECOMP_XMM_PORTABLE)
-endif()
 
 # HLE modules. Each links the runtime only, never another module, so any one
 # can be replaced (or reused by another title) on its own.

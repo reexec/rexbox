@@ -1,7 +1,9 @@
-// The functions recompiled code calls into (declared by recomp_types.h),
-// implemented on the active rexbox runtime.
+// The functions recompiled code calls into, implemented on the active rexbox
+// runtime. The lifter's names for them are defined in recomp_abi.c, which
+// forwards here (recomp_callbacks.h).
 
 #include "recomp_bridge.h"
+#include "recomp_callbacks.h"
 
 #include "rexbox/platform/guarded_call.h"
 #include "rexbox/recomp/recomp_abi.h"
@@ -359,12 +361,10 @@ namespace bridge = rexbox::recomp;
 extern "C"
 {
 
-typedef void (*recomp_func_t)(void);
-
 // Generated code consults this before its own dispatch table, so a bound HLE
 // export wins over a lifted body for indirect calls. Kernel thunk VAs bound
 // in the registry resolve here too.
-recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
+RexboxGuestFunction rexbox_bridge_lookup_manual(uint32_t xbox_va)
 {
     rexbox::runtime::HleRegistry* registry = bridge::BridgeRegistry();
     // Diagnostic: with REXBOX_HLE_TRACE, kernel imports are logged by ordinal
@@ -455,7 +455,7 @@ void rexbox_hle_enter(RexboxHleSlot* slot)
 // reports a direct call whose callee changed ebx/esi/edi or came back without
 // popping even its return address -- a stack imbalance that otherwise shows up
 // far away. The first 16 are logged with the call site.
-void recomp_abi_violation_log(uint32_t va, uint32_t ebx0, uint32_t esi0, uint32_t edi0, uint32_t esp0)
+void rexbox_bridge_abi_violation(uint32_t va, uint32_t ebx0, uint32_t esi0, uint32_t edi0, uint32_t esp0)
 {
     // REXBOX_ABI_IGNORE=<hex>[,<hex>...] skips callees that move esp down by
     // design (_chkstk, SEH prologs); REXBOX_ABI_ESP_ONLY reports only the
@@ -495,7 +495,7 @@ void recomp_abi_violation_log(uint32_t va, uint32_t ebx0, uint32_t esi0, uint32_
 }
 
 // Generated code built with RECOMP_CALL_PROFILE reports every direct call.
-void recomp_call_profile_hit(uint32_t va)
+void rexbox_bridge_call_profile_hit(uint32_t va)
 {
     bridge::CallProfile* profile = bridge::ThreadProfile();
     const uint32_t index = profile->next.fetch_add(1);
@@ -513,7 +513,7 @@ void recomp_call_profile_hit(uint32_t va)
 // Kernel imports are called through synthetic VAs (0xFE000000 and up) that
 // boot preparation wrote into the thunk slots. Bound ones were already found
 // by recomp_lookup_manual; anything reaching here has no implementation.
-recomp_func_t recomp_lookup_kernel(uint32_t xbox_va)
+RexboxGuestFunction rexbox_bridge_lookup_kernel(uint32_t xbox_va)
 {
     if (!rexbox::runtime::IsKernelThunkVa(xbox_va))
     {
@@ -523,7 +523,7 @@ recomp_func_t recomp_lookup_kernel(uint32_t xbox_va)
     return bridge::BridgeUnimplementedKernelThunk();
 }
 
-void recomp_icall_fail_log(uint32_t va)
+void rexbox_bridge_icall_fail(uint32_t va)
 {
     if (bridge::BridgeStopOnUnresolved())
     {
@@ -540,7 +540,7 @@ void recomp_icall_fail_log(uint32_t va)
 // An unresolved-target stub ran: the disassembler did not find a function at
 // va, so the code there was skipped. Called by code lifted with the reJSRF
 // fork of xboxrecomp (RECOMP_STUB_REPORT); upstream stubs report on their own.
-void recomp_unresolved_stub_log(uint32_t va)
+void rexbox_bridge_unresolved_stub(uint32_t va)
 {
     if (bridge::BridgeFirstTimeAt(va))
     {
@@ -549,7 +549,7 @@ void recomp_unresolved_stub_log(uint32_t va)
     }
 }
 
-void recomp_icall_not_code_log(uint32_t va)
+void rexbox_bridge_icall_not_code(uint32_t va)
 {
     if (bridge::BridgeFirstTimeAt(va))
     {
@@ -584,7 +584,7 @@ void recomp_icall_not_code_log(uint32_t va)
     }
 }
 
-void recomp_unimpl(const char* text, uint32_t va)
+void rexbox_bridge_unimpl(const char* text, uint32_t va)
 {
     if (bridge::BridgeFirstTimeAt(va))
     {
@@ -594,7 +594,7 @@ void recomp_unimpl(const char* text, uint32_t va)
 
 // INT 2Dh debug services. Service 1 prints the ANSI_STRING at arg_va
 // ({USHORT Length; USHORT MaximumLength; PCHAR Buffer}).
-void recomp_debug_service(uint32_t service, uint32_t arg_va)
+void rexbox_bridge_debug_service(uint32_t service, uint32_t arg_va)
 {
     rexbox::runtime::GuestMemory* memory = bridge::BridgeMemory();
     if (service != 1 || memory == nullptr || !memory->IsValid(arg_va, 8))
@@ -616,7 +616,7 @@ void recomp_debug_service(uint32_t service, uint32_t arg_va)
 // xboxrecomp v0.15.0) call this when g_xbox_guest_cpu_preempt is set. rexbox
 // never sets it (guest threads are host threads with no guest CPU lock), so
 // this is never reached; it exists so such code links.
-void xbox_GuestCpuPreempt(uint32_t /*va*/)
+void rexbox_bridge_guest_cpu_preempt(uint32_t /*va*/)
 {
 }
 
@@ -625,7 +625,7 @@ void xbox_GuestCpuPreempt(uint32_t /*va*/)
 // FXSR and SSE; two basic leaves, no extended ones. A leaf above the maximum
 // returns the highest basic leaf's data (Intel SDM vol. 2A, CPUID). Leaf 2
 // describes the P6 TLBs and the 16 KB 4-way L1 caches and no L2.
-void xbox_Cpuid(uint32_t leaf, uint32_t /*subleaf*/, uint32_t out[4])
+void rexbox_bridge_cpuid(uint32_t leaf, uint32_t /*subleaf*/, uint32_t out[4])
 {
     out[0] = out[1] = out[2] = out[3] = 0;
     switch (leaf > 2 ? 2 : leaf)
@@ -652,7 +652,7 @@ void xbox_Cpuid(uint32_t leaf, uint32_t /*subleaf*/, uint32_t out[4])
 // first time. Port 0x80C0's bit 5 is the video encoder's field flag, which a
 // title may poll for a vertical blank; it toggles on every read so such a
 // poll ends.
-uint32_t xbox_PortIn(uint32_t port, int width)
+uint32_t rexbox_bridge_port_in(uint32_t port, int width)
 {
     port &= 0xFFFFu;
     if (port == 0x80C0u)
@@ -668,7 +668,7 @@ uint32_t xbox_PortIn(uint32_t port, int width)
     return 0;
 }
 
-void xbox_PortOut(uint32_t port, uint32_t value, int width)
+void rexbox_bridge_port_out(uint32_t port, uint32_t value, int width)
 {
     port &= 0xFFFFu;
     if (bridge::BridgeFirstTimeAt(0x80010000u | port))
@@ -680,7 +680,7 @@ void xbox_PortOut(uint32_t port, uint32_t value, int width)
 
 // The Xbox CPU runs at 733 MHz. A time-based counter keeps the rate the guest
 // expects on every host architecture.
-uint64_t xbox_ReadTimeStampCounter(void)
+uint64_t rexbox_bridge_read_tsc(void)
 {
     using Clock = std::chrono::steady_clock;
     static const Clock::time_point start = Clock::now();
@@ -688,17 +688,17 @@ uint64_t xbox_ReadTimeStampCounter(void)
     return static_cast<uint64_t>(ns) * 733u / 1000u;
 }
 
-void recomp_trace_enter(const char* name, uint32_t va)
+void rexbox_bridge_trace_enter(const char* name, uint32_t va)
 {
     std::fprintf(stderr, "[trace] enter %s %08X\n", name, va);
 }
 
-void recomp_trace_exit(const char* name, uint32_t va)
+void rexbox_bridge_trace_exit(const char* name, uint32_t va)
 {
     std::fprintf(stderr, "[trace] exit  %s %08X\n", name, va);
 }
 
-void recomp_trace_esp(const char* name, const char* tag)
+void rexbox_bridge_trace_esp(const char* name, const char* tag)
 {
     std::fprintf(stderr, "[trace] esp   %s %s\n", name, tag);
 }
@@ -706,7 +706,7 @@ void recomp_trace_esp(const char* name, const char* tag)
 // Native buffers paired with guest jmp_buf addresses. The titles seen so far
 // do not use them, so recomp_guest_longjmp reports "no native counterpart"
 // and the guest's own longjmp runs.
-jmp_buf* recomp_setjmp_slot(uint32_t buf_va)
+void* rexbox_bridge_setjmp_slot(uint32_t buf_va)
 {
     static std::mutex mutex;
     static std::unordered_map<uint32_t, jmp_buf*> slots;
@@ -716,10 +716,10 @@ jmp_buf* recomp_setjmp_slot(uint32_t buf_va)
     {
         slot = new jmp_buf[1];
     }
-    return slot;
+    return static_cast<void*>(slot);
 }
 
-int recomp_guest_longjmp(uint32_t /*buf_va*/, uint32_t /*value*/)
+int rexbox_bridge_guest_longjmp(uint32_t /*buf_va*/, uint32_t /*value*/)
 {
     return 0;
 }
