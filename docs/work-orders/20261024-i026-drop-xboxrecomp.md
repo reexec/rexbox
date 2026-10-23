@@ -7,6 +7,7 @@
 3. **CMake(설계 §3.1, §3.3).**
    * `src/CMakeLists.txt`: `rexbox_recomp`에서 `recomp_abi.c`, 헤더 include 경로, `/wd4310`, `RECOMP_XMM_PORTABLE`를 뺀다.
    * `cmake/rexbox_recomp.cmake`: `recomp_abi.c`를 `GEN_DIR` include로 컴파일한다(엄격 경고 + `/wd4310`). `RECOMP_XMM_PORTABLE`를 생성 코드 쪽에 붙인다. 해시 검사와 `src/kernel` include를 지운다. `GEN_DIR/recomp_types.h`가 없으면 실패하게 한다. `rexbox_recomp`와의 링크 순환을 선언한다.
+   * `src/recomp/`: `recomp_bridge.cpp`의 lifter 콜백 `extern "C"` 껍데기를 `recomp_abi.c`로 옮긴다. 본체는 `recomp_bridge.h`에 선언한 C++ 브리지 함수로 남긴다. `rexbox_hle_enter`는 그대로 둔다(설계 §3.1).
    * `CMakeLists.txt`: `REXBOX_XBOXRECOMP_DIR`와 그 검사를 지운다. `include(rexbox_license)`와 `rexbox_check_license` 호출을 지우고, `cmake/rexbox_license.cmake`를 삭제한다.
 4. **스크립트(설계 §3.2).** `scripts/recomp/`에 `hle_overrides.py`, `hle_pops.py`, `pointer_targets.py`를 만들어 각 함수를 옮긴다(평범한 데이터 인자, 이름 규칙은 인자). `regenerate.py`, `check_hle_pops.py`, `find_pointer_targets.py`를 지운다. `test_hle_overrides.py`, `test_hle_pops.py`, `test_pointer_targets.py`(합성 입력)를 더한다.
 5. **submodule과 CI(설계 §3.4).** `git rm third_party/xboxrecomp`, `.gitmodules` 정리. `ci.yml`과 `release.yml`의 주석을 고치고 Python 테스트 단계를 더한다.
@@ -28,6 +29,7 @@ Design: [20261024-i026-drop-xboxrecomp](../design/20261024-i026-drop-xboxrecomp.
 3. **CMake (design 3.1, 3.3).**
    * `src/CMakeLists.txt`: remove from `rexbox_recomp` the file `recomp_abi.c`, the header include path, `/wd4310` and `RECOMP_XMM_PORTABLE`.
    * `cmake/rexbox_recomp.cmake`: compile `recomp_abi.c` with `GEN_DIR` on the include path (strict warnings plus `/wd4310`). Put `RECOMP_XMM_PORTABLE` on the generated-code side. Drop the hash check and the `src/kernel` include. Fail without `GEN_DIR/recomp_types.h`. Declare the link cycle with `rexbox_recomp`.
+   * `src/recomp/`: move the `extern "C"` shells of the lifter callbacks from `recomp_bridge.cpp` to `recomp_abi.c`. Their bodies stay as C++ bridge functions declared in `recomp_bridge.h`. `rexbox_hle_enter` stays where it is (design 3.1).
    * `CMakeLists.txt`: drop `REXBOX_XBOXRECOMP_DIR` and its check. Drop `include(rexbox_license)` and the `rexbox_check_license` calls, and delete `cmake/rexbox_license.cmake`.
 4. **Scripts (design 3.2).** Add `hle_overrides.py`, `hle_pops.py` and `pointer_targets.py` under `scripts/recomp/` and move the functions there (plain-data arguments; naming passed in as arguments). Delete `regenerate.py`, `check_hle_pops.py` and `find_pointer_targets.py`. Add `test_hle_overrides.py`, `test_hle_pops.py` and `test_pointer_targets.py` (synthetic inputs).
 5. **Submodule and CI (design 3.4).** `git rm third_party/xboxrecomp` and clean up `.gitmodules`. Fix the comments in `ci.yml` and `release.yml` and add a Python test step.

@@ -54,12 +54,17 @@ flowchart TB
 * `rexbox_add_recompiled_library(<target> GEN_DIR <dir> TITLE <lib>)`가 `${REXBOX}/src/recomp/recomp_abi.c`를 그 타깃 맥락에서 컴파일한다. include 경로는 `GEN_DIR`(lifter가 생성 코드 옆에 둔 `recomp_types.h`)이다.
   * 생성 코드와 `recomp_abi.c`가 같은 헤더 파일로 컴파일되므로 둘이 어긋날 수 없다. 그래서 체크아웃 헤더와의 SHA256 비교는 지운다.
   * `recomp_abi.c`는 rexbox 코드이므로 생성 코드의 `/w` 대신 rexbox의 엄격한 경고(`rexbox_strict_warnings`)와 `/wd4310`(upstream 헤더의 x87 상수 캐스트)로 컴파일한다. 방법은 `<target>`과 별도의 작은 타깃이나 소스별 옵션이다. 구현에서 링크 순환(아래)과 함께 정한다.
+* **lifter ABI에 닿는 심볼을 모두 `recomp_abi.c`에 모은다.** 지금 `recomp_bridge.cpp`는 헤더를 include하지 않은 채 생성 코드가 부르는 콜백을 `extern "C"`로 직접 정의한다. 대상은 `recomp_lookup_manual`, `recomp_lookup_kernel`, `recomp_icall_fail_log`, `recomp_icall_not_code_log`, `recomp_unresolved_stub_log`, `recomp_unimpl`, `recomp_debug_service`, `recomp_abi_violation_log`, `recomp_call_profile_hit`, `xbox_Cpuid`, `xbox_PortIn`/`xbox_PortOut`, `xbox_ReadTimeStampCounter`, `xbox_GuestCpuPreempt`, `recomp_trace_*`, `recomp_setjmp_slot`, `recomp_guest_longjmp`이다. 그래서 lifter가 콜백 시그니처를 바꿔도 컴파일러가 잡지 못한다. C 링크는 이름만 맞으면 붙고, 어긋남은 실행 중에야 드러난다.
+  * 이 콜백들의 `extern "C"` 껍데기를 `recomp_abi.c`로 옮긴다. 껍데기는 인자를 rexbox 자신의 시그니처를 가진 C++ 브리지 함수로 넘기기만 하고, 본체(HLE 조회, 멈춤, 진단)는 `recomp_bridge.cpp`에 그대로 둔다. 브리지 함수 선언은 `src/recomp/recomp_bridge.h`(C에서도 include할 수 있는 부분)에 둔다.
+  * 그러면 lifter ABI에 닿는 정의가 모두 실제 헤더로 컴파일되는 한 파일에 모인다. 타이틀이 lifter를 바꿨을 때 헤더가 선언한 콜백의 시그니처가 어긋나면 컴파일 에러가 난다.
+  * 헤더가 선언하지 않는 콜백(예: fork에만 있는 `recomp_unresolved_stub_log`)도 껍데기를 정의한다. upstream이든 fork든 같은 rexbox로 링크된다. 선언이 없으니 이것들만은 컴파일러가 확인하지 못한다.
+  * `rexbox_hle_enter`는 rexbox 계약(`recomp_hle_entry.h`)이라 lifter ABI가 아니므로 `recomp_bridge.cpp`에 남는다.
 * `RECOMP_XMM_PORTABLE`(옵션 `REXBOX_RECOMP_XMM_SSE2`)은 헤더를 include하는 곳, 즉 생성 코드와 `recomp_abi.c`에만 붙인다. 지금은 `rexbox_recomp`에 PUBLIC으로 붙어 전파된다.
 * 생성 코드의 include 경로 `${REXBOX_XBOXRECOMP_DIR}/src/kernel`(`recomp_icall_feedback.h`)은 지운다. 이 헤더는 `RECOMP_ICALL_FEEDBACK`를 켤 때만 include되며 rexbox는 켜지 않는다. 그 기능이 필요한 타이틀은 자기 체크아웃 경로를 `target_include_directories`로 더한다.
 * `CMakeLists.txt`의 `REXBOX_XBOXRECOMP_DIR` 캐시 변수와 존재 검사를 지운다.
 * `GEN_DIR` 계약: `recomp_dispatch.c`와 `recomp_types.h`가 있어야 한다. 앞의 것이 없으면 지금처럼 타깃을 만들지 않고 돌아오고, 뒤의 것이 없으면 configure가 실패한다.
 
-링크 순환: 지금은 `rexbox_recomp`가 `recomp_abi.c`의 함수(`rexbox_recomp_get_gprs` 등)를 자기 안에서 해결한다. 옮긴 뒤에는 `rexbox_recomp`가 생성 코드 쪽에 정의된 심볼을 부른다. 생성 코드 ↔ 타이틀 사이에 이미 있는 순환과 같은 방식(양방향 `target_link_libraries`)으로 선언하고, GNU ld(Linux 프리셋)와 MSVC 둘 다에서 링크를 확인한다.
+링크 순환: 지금은 `rexbox_recomp`가 `recomp_abi.c`의 함수(`rexbox_recomp_get_gprs` 등)를 자기 안에서 해결한다. 옮긴 뒤에는 방향이 둘이 된다. 콜백 껍데기 → C++ 브리지는 생성 코드 쪽이 `rexbox_recomp`를 부르는 보통 방향이다. 반대로 `recomp_runtime.cpp`와 HLE가 쓰는 레지스터 접근 함수(`rexbox_recomp_*`)는 `rexbox_recomp`가 생성 코드 쪽에 정의된 심볼을 부르는 방향이다. 생성 코드 ↔ 타이틀 사이에 이미 있는 순환과 같은 방식(양방향 `target_link_libraries`)으로 선언하고, GNU ld(Linux 프리셋)와 MSVC 둘 다에서 링크를 확인한다.
 
 ### 3.2 스크립트: 남는 것과 타이틀로 가는 것
 
@@ -148,7 +153,7 @@ rexbox를 머지하기 전에 두 타이틀에서 이식이 동작함을 확인�
 
 ## 7. 열린 문제
 
-* 3.1의 `recomp_abi.c` 컴파일 방식(별도 타깃 또는 소스별 옵션)과 순환 선언은 구현에서 GNU ld 링크를 보고 정한다. 결과는 작업 로그와 `ARCHITECTURE.md`에 적는다.
+* 3.1의 `recomp_abi.c` 컴파일 방식(별도 타깃 또는 소스별 옵션)과 순환 선언은 구현에서 GNU ld 링크를 보고 정한다. 결과는 작업 로그와 `ARCHITECTURE.md`에 적는다. 순환이 문제가 되면 남은 방향은 레지스터 접근 함수뿐이다. 그 경우 `recomp_abi.c`가 접근 함수 표를 `rexbox_recomp`에 등록하는 방식(함수 포인터)도 검토한다.
 
 ---
 
@@ -190,12 +195,17 @@ The diagram above shows the split.
 * `rexbox_add_recompiled_library(<target> GEN_DIR <dir> TITLE <lib>)` compiles `${REXBOX}/src/recomp/recomp_abi.c` in that target's context, with `GEN_DIR` (where the lifter put `recomp_types.h` next to the generated code) on the include path.
   * The generated code and `recomp_abi.c` compile against the same header file and cannot disagree, so the SHA256 comparison with a checkout's header goes away.
   * `recomp_abi.c` is rexbox code. It keeps rexbox's strict warnings (`rexbox_strict_warnings`) plus `/wd4310` (the upstream header's x87 constant casts) rather than the generated code's `/w`. Whether through a small separate target or per-source options is decided in implementation, together with the link cycle below.
+* **Every symbol that touches the lifter ABI moves into `recomp_abi.c`.** Today `recomp_bridge.cpp` defines the callbacks generated code calls as `extern "C"` without including the header: `recomp_lookup_manual`, `recomp_lookup_kernel`, `recomp_icall_fail_log`, `recomp_icall_not_code_log`, `recomp_unresolved_stub_log`, `recomp_unimpl`, `recomp_debug_service`, `recomp_abi_violation_log`, `recomp_call_profile_hit`, `xbox_Cpuid`, `xbox_PortIn`/`xbox_PortOut`, `xbox_ReadTimeStampCounter`, `xbox_GuestCpuPreempt`, `recomp_trace_*`, `recomp_setjmp_slot` and `recomp_guest_longjmp`. If the lifter changes a callback's signature, no compiler notices: C links by name alone, and the mismatch only shows at run time.
+  * The `extern "C"` shells of these callbacks move to `recomp_abi.c`. A shell only forwards to a C++ bridge function with rexbox's own signature; the bodies (HLE lookup, stops, diagnostics) stay in `recomp_bridge.cpp`. The bridge functions are declared in `src/recomp/recomp_bridge.h`, in a part C can include.
+  * Every definition that touches the lifter ABI is then in one file compiled against the real header. When a title changes lifters, a callback whose declared signature no longer matches fails to compile.
+  * Callbacks the header does not declare (for example `recomp_unresolved_stub_log`, which only the fork has) get shells as well, so the same rexbox links with upstream or the fork. Having no declaration, these alone go unchecked.
+  * `rexbox_hle_enter` belongs to rexbox's contract (`recomp_hle_entry.h`), not the lifter ABI, and stays in `recomp_bridge.cpp`.
 * `RECOMP_XMM_PORTABLE` (option `REXBOX_RECOMP_XMM_SSE2`) goes only where the header is included: the generated code and `recomp_abi.c`. Today it is PUBLIC on `rexbox_recomp` and propagates.
 * The generated code's include path `${REXBOX_XBOXRECOMP_DIR}/src/kernel` (`recomp_icall_feedback.h`) goes away. That header is included only with `RECOMP_ICALL_FEEDBACK` on, which rexbox never sets. A title that wants the feature adds its own checkout's path with `target_include_directories`.
 * The `REXBOX_XBOXRECOMP_DIR` cache variable and its existence check leave `CMakeLists.txt`.
 * `GEN_DIR` contract: it must hold `recomp_dispatch.c` and `recomp_types.h`. Without the first, no target is made (as today). Without the second, configure fails.
 
-Link cycle: today `rexbox_recomp` resolves `recomp_abi.c`'s functions (`rexbox_recomp_get_gprs`, ...) internally. After the move, `rexbox_recomp` calls symbols defined on the generated-code side. This cycle is declared like the existing generated-code ↔ title cycle (`target_link_libraries` in both directions), and linking is checked with both GNU ld (Linux presets) and MSVC.
+Link cycle: today `rexbox_recomp` resolves `recomp_abi.c`'s functions (`rexbox_recomp_get_gprs`, ...) internally. After the move there are two directions. Callback shells → C++ bridge is the usual one: the generated-code side calls `rexbox_recomp`. The register accessors (`rexbox_recomp_*`) used by `recomp_runtime.cpp` and the HLE go the other way: `rexbox_recomp` calls symbols defined on the generated-code side. This cycle is declared like the existing generated-code ↔ title cycle (`target_link_libraries` in both directions), and linking is checked with both GNU ld (Linux presets) and MSVC.
 
 ### 3.2 Scripts: what stays and what moves to the titles
 
@@ -269,4 +279,4 @@ Order (see the sequence diagram above): implement #26 in rexbox with the standal
 
 ## 7. Open questions
 
-* How `recomp_abi.c` is compiled in 3.1 (a separate target or per-source options) and how the cycle is declared are settled in implementation by watching the GNU ld link. The result goes into the work log and `ARCHITECTURE.md`.
+* How `recomp_abi.c` is compiled in 3.1 (a separate target or per-source options) and how the cycle is declared are settled in implementation by watching the GNU ld link. The result goes into the work log and `ARCHITECTURE.md`. If the cycle is a problem, only the register accessors remain in the reverse direction. In that case, also consider `recomp_abi.c` registering a table of accessors (function pointers) with `rexbox_recomp`.
