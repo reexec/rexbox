@@ -7,7 +7,16 @@
 // Title-agnostic: scripts/recomp/regenerate.py uses the output to generate
 // HLE overrides (docs/design/20261012-i006-xdk-symbol-binding.md).
 
+// The library's header defines a static name table this tool does not use
+// (xbe_type_str); GCC and Clang would warn about it in every includer.
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#endif
 #include <libXbSymbolDatabase.h>
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 #include <algorithm>
 #include <cstdio>

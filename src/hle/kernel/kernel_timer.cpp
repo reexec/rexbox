@@ -141,7 +141,7 @@ void DpcLoop()
             memory.Write8(dpc + kDpcInserted, 0);
         }
         const GuestAddress routine = memory.Read32(dpc + kDpcRoutine);
-        char routine_text[16];
+        char routine_text[24];  // "routine " + 8 hex digits + NUL is 17
         std::snprintf(routine_text, sizeof(routine_text), "routine %08X", routine);
         TraceOnce("DPC", routine_text);  // once per routine: which DPCs a title runs
         const uint32_t arguments[4] = {dpc, memory.Read32(dpc + kDpcContext), memory.Read32(dpc + kDpcArgument1),
