@@ -34,19 +34,19 @@ flowchart TD
 * `include/rexbox/`, `src/`: XBE 파서, 런타임, 재컴파일 ABI 어댑터, HLE 모듈. 타이틀 이름이나 주소는 없습니다.
 * `src/platform/`: OS 계층(Win32, Linux)과 SDL3 백엔드.
 * `tools/`: `rexbox_xbe_info`, `rexbox_xdk_symbols`(재컴파일 파이프라인용), 게임 없이 도는 probe 세 개.
-* `scripts/recomp/`: 타이틀 프로젝트가 wrapper로 부르는 재컴파일 파이프라인 스크립트.
-* `third_party/`: SDL3, Dear ImGui, SMAA, XbSymbolDatabase, xboxrecomp(upstream v0.15.0) submodule.
+* `scripts/recomp/`: 타이틀의 재컴파일 파이프라인이 부르는 보조 함수(XDK 심볼과 HLE override 생성, HLE pop 수 검사, 포인터로만 닿는 함수 찾기, XBE 변형 확인). lifter(xboxrecomp)와 파이프라인 자체는 타이틀 프로젝트가 가집니다.
+* `third_party/`: SDL3, Dear ImGui, SMAA, XbSymbolDatabase submodule.
 * 자세한 내용: [ARCHITECTURE.md](ARCHITECTURE.md), [설계 i001](docs/design/20261020-i001-project-bootstrap.md), [프로젝트 헌장](docs/PROJECT_CHARTER.md)
 
 ## 타이틀 프로젝트에서 쓰기
 
 ```cmake
 set(REXBOX_BUILD_TOOLS ON)                       # rexbox_xdk_symbols and the probes
-# set(REXBOX_XBOXRECOMP_DIR ".../my/xboxrecomp")  # to pin your own lifter checkout
 add_subdirectory(third_party/rexbox)
 rexbox_apply_host_flags()                        # /EHa and friends for the whole program
 add_library(mytitle_game STATIC ...)
 target_link_libraries(mytitle_game PUBLIC rexbox_recomp)
+# GEN_DIR: your lifter's output, with its ABI header recomp_types.h
 rexbox_add_recompiled_library(mytitle_recomp GEN_DIR "${CMAKE_SOURCE_DIR}/gen/my_variant/gen" TITLE mytitle_game)
 add_executable(mytitle main.cpp)
 target_link_libraries(mytitle PRIVATE mytitle_game rexbox_hle rexbox_platform imgui)
@@ -83,7 +83,7 @@ cd rexbox
 
 ## 참고 프로젝트
 
-[xboxrecomp](https://github.com/sp00nznet/xboxrecomp)(재컴파일 파이프라인과 lifter ABI), [XbSymbolDatabase](https://github.com/Cxbx-Reloaded/XbSymbolDatabase)(XDK 함수 식별), [re2DJ](https://github.com/reexec/re2DJ)(같은 호스트 계층) 등. 목록과 라이선스: [docs/kb/external-references.md](docs/kb/external-references.md), [CREDITS.md](CREDITS.md)
+[xboxrecomp](https://github.com/sp00nznet/xboxrecomp)(소비자가 쓰는 재컴파일 파이프라인, rexbox가 구현하는 lifter ABI), [XbSymbolDatabase](https://github.com/Cxbx-Reloaded/XbSymbolDatabase)(XDK 함수 식별), [re2DJ](https://github.com/reexec/re2DJ)(같은 호스트 계층) 등. 목록과 라이선스: [docs/kb/external-references.md](docs/kb/external-references.md), [CREDITS.md](CREDITS.md)
 
 ## 라이선스
 
@@ -99,11 +99,11 @@ This repository does not and will not contain any game's executable, assets, or 
 
 ## Structure
 
-See the diagram above. `include/rexbox/` and `src/` hold the XBE parser, the runtime, the recompiled-code ABI adapter and the HLE modules, with no title's name or addresses; `src/platform/` the OS layer (Win32) and the SDL3 backend; `tools/` `rexbox_xbe_info`, `rexbox_xdk_symbols` (for the recompilation pipeline) and three probes that run without a game; `scripts/recomp/` the pipeline scripts a title project calls through a wrapper; `third_party/` the SDL3, Dear ImGui, SMAA, XbSymbolDatabase and xboxrecomp (upstream v0.15.0) submodules. More: [ARCHITECTURE.md](ARCHITECTURE.md), [design i001](docs/design/20261020-i001-project-bootstrap.md), [project charter](docs/PROJECT_CHARTER.md).
+See the diagram above. `include/rexbox/` and `src/` hold the XBE parser, the runtime, the recompiled-code ABI adapter and the HLE modules, with no title's name or addresses; `src/platform/` the OS layer (Win32) and the SDL3 backend; `tools/` `rexbox_xbe_info`, `rexbox_xdk_symbols` (for the recompilation pipeline) and three probes that run without a game; `scripts/recomp/` the helpers a title's recompilation pipeline calls (XDK symbols and HLE overrides, the HLE pop-count check, pointer-only functions, the XBE variant check), while the lifter (xboxrecomp) and the pipeline itself belong to the title project; `third_party/` the SDL3, Dear ImGui, SMAA and XbSymbolDatabase submodules. More: [ARCHITECTURE.md](ARCHITECTURE.md), [design i001](docs/design/20261020-i001-project-bootstrap.md), [project charter](docs/PROJECT_CHARTER.md).
 
 ## Using it from a title project
 
-The CMake snippet above is the whole contract: add the subdirectory, call `rexbox_apply_host_flags()`, link `rexbox_recomp` into the title library, build the generated code with `rexbox_add_recompiled_library`, and link the app against `rexbox_hle`, `rexbox_platform` and `imgui`. The app names itself through `rexbox::platform::SetDisplayTitle` and `SetApplicationIdentity`; the title profile identifies the XBE by its certificate and binds the XDK variables into the `HleRegistry`. The full contract is in [ARCHITECTURE.md §2](ARCHITECTURE.md).
+The CMake snippet above is the whole contract: add the subdirectory, call `rexbox_apply_host_flags()`, link `rexbox_recomp` into the title library, build the generated code (your lifter's output, with its ABI header `recomp_types.h`) with `rexbox_add_recompiled_library`, and link the app against `rexbox_hle`, `rexbox_platform` and `imgui`. The app names itself through `rexbox::platform::SetDisplayTitle` and `SetApplicationIdentity`; the title profile identifies the XBE by its certificate and binds the XDK variables into the `HleRegistry`. The full contract is in [ARCHITECTURE.md §2](ARCHITECTURE.md).
 
 ## Standalone build (Win32)
 

@@ -7,16 +7,12 @@ rexbox is MIT licensed. The third-party code below is included in, or ported int
 ## xboxrecomp
 
 * 출처 / Source: https://github.com/sp00nznet/xboxrecomp
-* 라이선스 / License: MIT (Copyright (c) 2026 sp00nz). 전문은 `third_party/xboxrecomp/LICENSE`. / Full text in `third_party/xboxrecomp/LICENSE`.
-* 포함 방식 / How included: git submodule `third_party/xboxrecomp`, upstream v0.15.0 (`6376eb829e035d23c1c65377d8523eceb068ee1d`). 소비자 프로젝트는 `REXBOX_XBOXRECOMP_DIR`로 자기 체크아웃(예: reJSRF의 fork `nworkers/xboxrecomp` 브랜치 `rejsrf`)을 대신 쓸 수 있다. / Git submodule at upstream v0.15.0; a consumer may point `REXBOX_XBOXRECOMP_DIR` at its own checkout instead (reJSRF's fork `nworkers/xboxrecomp`, branch `rejsrf`).
+* 라이선스 / License: MIT (Copyright (c) 2026 sp00nz). 전문은 아래. / Full text below.
+* 포함 방식 / How included: 저장소에 xboxrecomp는 없다. lifter는 타이틀 프로젝트가 고정하고, rexbox는 아래의 옮긴 코드만 가진다([설계 i026](docs/design/20261024-i026-drop-xboxrecomp.md)). / xboxrecomp is not in the repository: the title projects pin the lifter, and rexbox holds only the ported code below ([design i026](docs/design/20261024-i026-drop-xboxrecomp.md)).
 * 옮긴 코드 / Ported code:
   * `src/hle/kernel/kernel_exports.cpp` — `tools/xbe_parser/xbe_parser.py`의 `KERNEL_EXPORTS` 표 / the `KERNEL_EXPORTS` table of `tools/xbe_parser/xbe_parser.py`.
-  * `src/recomp/recomp_bridge.cpp`의 `xbox_Cpuid` — `src/kernel/kernel_hal.c`가 보고하는 Pentium III cpuid 값과 같은 값(하드웨어 사실; Intel SDM) / the same Pentium III cpuid values `src/kernel/kernel_hal.c` reports (hardware facts; Intel SDM).
-* 빌드에 쓰는 파일 / Files used by the build (MIT, submodule에서 직접 / straight from the submodule):
-  * `templates/runtime/recomp_types.h` — 생성 코드 ABI 헤더, `rexbox_recomp`와 생성 코드가 include / the generated-code ABI header, included by `rexbox_recomp` and the generated code.
-  * `src/kernel/recomp_icall_feedback.h` — 생성 코드의 include 경로 / on the generated code's include path.
-  * `tools/` — 재컴파일 파이프라인(Python), `scripts/recomp/regenerate.py`가 실행 / the recompilation pipeline (Python), run by `scripts/recomp/regenerate.py`.
-* 제외 / Excluded: xemu에서 가져온 LGPL-2.1-or-later 파일(`src/apu/*`, `src/nv2a/nv2a_core.c`, `src/nv2a/nv2a_regs.h`, `src/nv2a/nv2a_state.h`)과 그것을 include하는 `include/xbox/xboxrecomp.h`는 컴파일·링크하지 않는다. `cmake/rexbox_license.cmake`의 `REXBOX_COPYLEFT_PATHS`가 이를 강제한다. / The LGPL-2.1-or-later files taken from xemu and `include/xbox/xboxrecomp.h`, which includes them, are never compiled or linked; `REXBOX_COPYLEFT_PATHS` in `cmake/rexbox_license.cmake` enforces this.
+  * `src/recomp/recomp_bridge.cpp`의 `rexbox_bridge_cpuid` — `src/kernel/kernel_hal.c`가 보고하는 Pentium III cpuid 값과 같은 값(하드웨어 사실; Intel SDM) / the same Pentium III cpuid values `src/kernel/kernel_hal.c` reports (hardware facts; Intel SDM).
+  * `src/recomp/recomp_abi.c` — `templates/runtime/recomp_types.h`가 선언하는 생성 코드 ABI(전역 상태와 콜백의 이름·시그니처)의 구현. 헤더 자체는 가지지 않으며, 타이틀의 생성 코드와 함께 온 헤더로 컴파일된다. / the implementation of the generated-code ABI (the names and signatures of the global state and callbacks) that `templates/runtime/recomp_types.h` declares. The header itself is not held; the file compiles against the one that comes with a title's generated code.
 
 ```text
 MIT License

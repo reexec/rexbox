@@ -17,7 +17,7 @@ rexbox 단독 빌드는 라이브러리, 도구(`rexbox_xbe_info`, `rexbox_xdk_s
 ```powershell
 git clone --recurse-submodules https://github.com/reexec/rexbox.git
 cd rexbox
-# submodule 없이 받았다면(xboxrecomp, XbSymbolDatabase, SDL, imgui, smaa):
+# submodule 없이 받았다면(XbSymbolDatabase, SDL, imgui, smaa):
 git submodule update --init
 ```
 
@@ -41,14 +41,15 @@ ctest --test-dir build\win32_x86 -C Debug --output-on-failure   # the three prob
 python scripts\recomp\xbe_variant.py <어떤 default.xbe>              # MD5와 인증서 신원(타이틀 프로파일용)
 ```
 
-## 5. 다른 lifter 체크아웃으로 컴파일 확인
+## 5. 재컴파일 보조 스크립트 테스트
 
-소비자 프로젝트가 자기 xboxrecomp를 고정한다면 그 헤더로 `rexbox_recomp`가 컴파일되는지 본다.
+`scripts/recomp/`의 보조 함수(타이틀의 파이프라인이 부른다)를 합성 입력으로 검사한다. CI도 같은 명령을 쓴다.
 
 ```powershell
-cmake -S . -B build\abi_check -G "Visual Studio 18 2026" -A Win32 -DREXBOX_XBOXRECOMP_DIR=<그 체크아웃> -DREXBOX_BUILD_TOOLS=OFF
-cmake --build build\abi_check --config Debug --target rexbox_recomp
+python -m unittest discover -s scripts\recomp -p "test_*.py"   # "OK"
 ```
+
+rexbox는 lifter를 가지지 않는다. 그래서 lifter의 ABI 헤더(`recomp_types.h`)로 컴파일되는 `src/recomp/recomp_abi.c`는 단독 빌드에 없고, 생성 코드를 가진 타이틀 프로젝트의 빌드에서 확인한다([설계 i026](../design/20261024-i026-drop-xboxrecomp.md)).
 
 ---
 
@@ -62,4 +63,4 @@ A standalone build yields the libraries, the tools (`rexbox_xbe_info`, `rexbox_x
 2. **Get the repository**: `git clone --recurse-submodules https://github.com/reexec/rexbox.git` (or `git submodule update --init` after a plain clone).
 3. **Build**: `.\scripts\build_win32_x86.ps1` for Debug, `-Configuration Release` for Release; `scripts\build_win32_x86.bat` takes the same arguments when the execution policy blocks `.ps1` files. Output goes under `build\win32_x86\`.
 4. **Check**: `ctest --test-dir build\win32_x86 -C Debug --output-on-failure` runs the three probes as the unit tests (the command CI uses); run by hand, the three probes print `83 check(s), 0 failure(s)`, `55 check(s), 0 failure(s)` and `220 check(s), 0 failure(s)` and exit 0; `rexbox_xbe_info.exe <default.xbe>` prints an XBE's header, certificate, sections and kernel imports; `python scripts\recomp\xbe_variant.py <default.xbe>` prints its MD5 and certificate identity for a title profile.
-5. **Compile against another lifter checkout**: configure a second tree with `-DREXBOX_XBOXRECOMP_DIR=<checkout> -DREXBOX_BUILD_TOOLS=OFF` and build the `rexbox_recomp` target.
+5. **Recompilation helper tests**: `python -m unittest discover -s scripts\recomp -p "test_*.py"` checks the helpers in `scripts/recomp/` (called by a title's pipeline) on synthetic inputs, as CI does. rexbox holds no lifter, so `src/recomp/recomp_abi.c`, which compiles against the lifter's ABI header, is not part of a standalone build. A title project's build with generated code checks it ([design i026](../design/20261024-i026-drop-xboxrecomp.md)).

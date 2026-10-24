@@ -6,15 +6,15 @@ cmake_minimum_required(VERSION 3.20)
 #
 # Consumer contract (docs/design/20261020-i001-project-bootstrap.md):
 #   add_subdirectory(third_party/rexbox)
-#   REXBOX_XBOXRECOMP_DIR   the xboxrecomp checkout whose lifter ABI header the
-#                           generated code and rexbox_recomp compile against
-#                           (default: rexbox's own pinned submodule)
 #   REXBOX_BUILD_TOOLS      rexbox_xdk_symbols and the probes (default: when
 #                           rexbox is the top-level project)
 #   rexbox_apply_host_flags()            the compiler settings every target of
 #                                        the program must share (cmake/rexbox_host_flags.cmake)
-#   rexbox_add_recompiled_library(...)   the generated-code target (cmake/rexbox_recomp.cmake)
-#   rexbox_check_license(), rexbox_strict_warnings()
+#   rexbox_add_recompiled_library(...)   the generated-code target, with the
+#                                        lifter's ABI header from its GEN_DIR (cmake/rexbox_recomp.cmake)
+#   rexbox_strict_warnings()
+# The lifter (its checkout, pipeline and ABI header) is the title's; rexbox
+# holds none (docs/design/20261024-i026-drop-xboxrecomp.md).
 #   REXBOX_PLATFORM, REXBOX_ARCH         the selected platform layer, exported to the parent
 
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
@@ -74,22 +74,10 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(rexbox_host_flags)
-include(rexbox_license)
 include(rexbox_recomp)
 rexbox_apply_host_flags()
 
 option(REXBOX_BUILD_TOOLS "Build rexbox_xdk_symbols and the HLE probes" ${PROJECT_IS_TOP_LEVEL})
-
-# The xboxrecomp checkout supplies the lifter's ABI header
-# (templates/runtime/recomp_types.h) to rexbox_recomp and the pipeline tools
-# to scripts/recomp/. A consumer that pins its own xboxrecomp points this at
-# it; the generated code and rexbox_recomp must come from the same checkout.
-set(REXBOX_XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/xboxrecomp" CACHE PATH
-    "xboxrecomp checkout whose lifter ABI header rexbox_recomp compiles against")
-if(NOT EXISTS "${REXBOX_XBOXRECOMP_DIR}/templates/runtime/recomp_types.h")
-    message(FATAL_ERROR "${REXBOX_XBOXRECOMP_DIR} has no templates/runtime/recomp_types.h; "
-                        "run: git submodule update --init (or set REXBOX_XBOXRECOMP_DIR)")
-endif()
 
 # SDL3 (zlib): the host library behind the display, input and audio contracts
 # on every target OS. Static library only; subsystems no HLE module uses stay
@@ -165,6 +153,5 @@ set(REXBOX_OWN_TARGETS
     rexbox_platform rexbox_xbe rexbox_runtime rexbox_recomp
     rexbox_hle_kernel rexbox_hle_xapi rexbox_hle_d3d8 rexbox_hle_dsound rexbox_hle_xinput)
 foreach(target IN LISTS REXBOX_OWN_TARGETS)
-    rexbox_check_license(${target})
     rexbox_strict_warnings(${target})
 endforeach()
