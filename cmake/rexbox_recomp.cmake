@@ -49,6 +49,12 @@ function(rexbox_add_recompiled_library target)
         target_link_libraries(${target}_abi PRIVATE rexbox_recomp)  # include/rexbox
         rexbox_strict_warnings(${target}_abi)
         target_link_libraries(${ARG_TITLE} PUBLIC ${target}_abi)
+        # rexbox_recomp is what calls the accessors, so it must precede this
+        # archive on the link line: linkers that scan each static library
+        # once (GNU ld) resolve nothing from an archive placed before its
+        # user. Declaring the dependency on rexbox_recomp orders it so; MSVC
+        # never needed it (issue #31).
+        target_link_libraries(rexbox_recomp PUBLIC ${target}_abi)
         return()
     endif()
     if(NOT EXISTS "${ARG_GEN_DIR}/recomp_types.h")
