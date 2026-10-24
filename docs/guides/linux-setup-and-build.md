@@ -2,7 +2,7 @@
 
 근거: [설계 i004](../design/20261020-i004-linux-preparation.md), [작업 로그 i004](../work-logs/20261020-i004-linux-preparation.md)
 
-Linux 단독 빌드는 Win32와 같이 라이브러리, 도구, probe 세 개를 만든다(게임 실행은 타이틀 프로젝트). Ubuntu 24.04(WSL2 포함)에서 확인했다.
+Linux 단독 빌드는 Win32와 같이 라이브러리, 도구, probe 네 개를 만든다(게임 실행은 타이틀 프로젝트). Ubuntu 24.04(WSL2 포함)에서 확인했다.
 
 ## 1. 필요한 것
 
@@ -45,7 +45,7 @@ cmake --preset linux-x64-debug && cmake --build --preset linux-x64-debug && ctes
 
 Based on: [design i004](../design/20261020-i004-linux-preparation.md), [work log i004](../work-logs/20261020-i004-linux-preparation.md)
 
-A Linux standalone build yields the libraries, the tools and the three probes, as on Win32 (running a game is a title project's business); verified on Ubuntu 24.04 (WSL2 included).
+A Linux standalone build yields the libraries, the tools and the four probes, as on Win32 (running a game is a title project's business); verified on Ubuntu 24.04 (WSL2 included).
 
 1. **Requirements**: the packages in the first block above (build tools, CMake, Ninja, and the development libraries SDL3 compiles against); for an x86 (`-m32`) build also `gcc-multilib`, `g++-multilib` and the `:i386` development packages after `dpkg --add-architecture i386` (the CI's list is in `.github/workflows/ci.yml`).
 2. **Get the repository**: `git clone --recurse-submodules https://github.com/reexec/rexbox.git`.

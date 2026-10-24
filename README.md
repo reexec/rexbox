@@ -33,7 +33,7 @@ flowchart TD
 
 * `include/rexbox/`, `src/`: XBE 파서, 런타임, 재컴파일 ABI 어댑터, HLE 모듈. 타이틀 이름이나 주소는 없습니다.
 * `src/platform/`: OS 계층(Win32, Linux)과 SDL3 백엔드.
-* `tools/`: `rexbox_xbe_info`, `rexbox_xdk_symbols`(재컴파일 파이프라인용), 게임 없이 도는 probe 세 개.
+* `tools/`: `rexbox_xbe_info`, `rexbox_xdk_symbols`(재컴파일 파이프라인용), 게임 없이 도는 probe 네 개.
 * `scripts/recomp/`: 타이틀의 재컴파일 파이프라인이 부르는 보조 함수(XDK 심볼과 HLE override 생성, HLE pop 수 검사, 포인터로만 닿는 함수 찾기, XBE 변형 확인). lifter(xboxrecomp)와 파이프라인 자체는 타이틀 프로젝트가 가집니다.
 * `third_party/`: SDL3, Dear ImGui, SMAA, XbSymbolDatabase submodule.
 * 자세한 내용: [ARCHITECTURE.md](ARCHITECTURE.md), [설계 i001](docs/design/20261020-i001-project-bootstrap.md), [프로젝트 헌장](docs/PROJECT_CHARTER.md)
@@ -99,7 +99,7 @@ This repository does not and will not contain any game's executable, assets, or 
 
 ## Structure
 
-See the diagram above. `include/rexbox/` and `src/` hold the XBE parser, the runtime, the recompiled-code ABI adapter and the HLE modules, with no title's name or addresses; `src/platform/` the OS layer (Win32) and the SDL3 backend; `tools/` `rexbox_xbe_info`, `rexbox_xdk_symbols` (for the recompilation pipeline) and three probes that run without a game; `scripts/recomp/` the helpers a title's recompilation pipeline calls (XDK symbols and HLE overrides, the HLE pop-count check, pointer-only functions, the XBE variant check), while the lifter (xboxrecomp) and the pipeline itself belong to the title project; `third_party/` the SDL3, Dear ImGui, SMAA and XbSymbolDatabase submodules. More: [ARCHITECTURE.md](ARCHITECTURE.md), [design i001](docs/design/20261020-i001-project-bootstrap.md), [project charter](docs/PROJECT_CHARTER.md).
+See the diagram above. `include/rexbox/` and `src/` hold the XBE parser, the runtime, the recompiled-code ABI adapter and the HLE modules, with no title's name or addresses; `src/platform/` the OS layer (Win32) and the SDL3 backend; `tools/` `rexbox_xbe_info`, `rexbox_xdk_symbols` (for the recompilation pipeline) and four probes that run without a game; `scripts/recomp/` the helpers a title's recompilation pipeline calls (XDK symbols and HLE overrides, the HLE pop-count check, pointer-only functions, the XBE variant check), while the lifter (xboxrecomp) and the pipeline itself belong to the title project; `third_party/` the SDL3, Dear ImGui, SMAA and XbSymbolDatabase submodules. More: [ARCHITECTURE.md](ARCHITECTURE.md), [design i001](docs/design/20261020-i001-project-bootstrap.md), [project charter](docs/PROJECT_CHARTER.md).
 
 ## Using it from a title project
 
@@ -107,7 +107,7 @@ The CMake snippet above is the whole contract: add the subdirectory, call `rexbo
 
 ## Standalone build (Win32)
 
-See the commands above, and [Win32 development setup and build](docs/guides/win32-setup-and-build.md) for the full procedure. The build yields the tools and the three probes; there is no executable to run a game with, since that is a title project.
+See the commands above, and [Win32 development setup and build](docs/guides/win32-setup-and-build.md) for the full procedure. The build yields the tools and the four probes; there is no executable to run a game with, since that is a title project.
 
 ## Platform status
 

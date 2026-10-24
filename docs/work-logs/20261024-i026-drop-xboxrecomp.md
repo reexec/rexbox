@@ -43,6 +43,19 @@
 * reJSRF는 입력을 넣는 실행 스크립트가 없어 게임플레이까지 가지 않았다. 부팅과 프레임 루프, 그리고 lift된 원본을 실제로 실행하는 두 검사 도구로 확인했다.
 * 두 타이틀은 아직 Linux 빌드가 없다. 그래서 GNU ld 확인은 실제 타이틀이 아니라 합성 타이틀로 했다.
 
+## 후속: 생성 코드 없는 트리의 링크 실패(v0.0.12)
+
+v0.0.11을 머지한 뒤, 두 타이틀의 PR(reCT3 #23, reJSRF #118) CI가 Win32 링크에서 실패했다. `rexbox_recomp.lib`가 `rexbox_recomp_set_memory` 등 레지스터 접근 함수 7개를 찾지 못했다.
+
+* **원인:** CI에는 게임 데이터가 없어 생성 코드가 없다. 그러면 `rexbox_add_recompiled_library`는 타깃을 만들지 않으므로 `recomp_abi.c`도 컴파일되지 않는다. 그런데 앱은 여전히 `rexbox_recomp`를 링크하고, `rexbox_recomp`는 그 함수들을 부른다. v0.0.10까지는 `recomp_abi.c`가 `rexbox_recomp` 안에 있어 문제가 없었다.
+* **검증에서 빠진 이유:** 로컬 검증은 모두 생성 코드가 있는 트리였다. rexbox CI에는 `rexbox_recomp`를 링크하는 실행 파일이 없었다.
+* **수정:** `src/recomp/recomp_abi_none.c`를 더했다. 레지스터 접근 함수 10개를 lifter 헤더 없이 스레드별 배열로 정의한다. 생성 코드가 없으면 `rexbox_add_recompiled_library`가 이것을 `<target>_abi`(STATIC)로 타이틀에 링크한다. `<target>`은 여전히 만들지 않는다.
+* **재발 방지:** 새 probe `rexbox_recomp_probe`(8개 검사)가 빈 `GEN_DIR`로 이 경로를 거쳐 `rexbox_recomp`를 링크한다. CTest와 CI에서 돈다.
+* **검증:**
+  * rexbox Win32 x86 Debug: 경고 0, CTest 4/4.
+  * reCT3를 빈 `RECT3_RECOMP_GEN_DIR`로 새로 configure해 Win32 x86 Debug 빌드: `rect3.exe` 링크, CTest 6/6.
+  * Linux는 PR CI로 확인한다.
+
 ---
 
 # Work log: removing the xboxrecomp dependency (issue #26)
@@ -81,3 +94,16 @@ See the table above. Summary:
 Not verified:
 * reJSRF gameplay: it has no input-driving script.
 * A GNU ld link of a real title: neither title builds on Linux yet.
+
+## Follow-up: the link failure in a tree without generated code (v0.0.12)
+
+After v0.0.11 was merged, the CI of both titles' pull requests (reCT3 #23, reJSRF #118) failed at the Win32 link: `rexbox_recomp.lib` could not find seven register accessors such as `rexbox_recomp_set_memory`.
+
+* **Cause:** CI has no game data, so there is no generated code. `rexbox_add_recompiled_library` then made no target and compiled no `recomp_abi.c`. The application still links `rexbox_recomp`, which calls those functions. Up to v0.0.10 `recomp_abi.c` was inside `rexbox_recomp`, so this never came up.
+* **Why verification missed it:** every local check used a tree with generated code, and rexbox's CI had no executable linking `rexbox_recomp`.
+* **Fix:** `src/recomp/recomp_abi_none.c` defines the ten register accessors on per-thread arrays, without the lifter's header. Without generated code, `rexbox_add_recompiled_library` links it into the title as `<target>_abi` (STATIC); it still makes no `<target>`.
+* **Guard against a repeat:** the new probe `rexbox_recomp_probe` (8 checks) links `rexbox_recomp` this way with an empty `GEN_DIR`, under CTest and CI.
+* **Verified:**
+  * rexbox Win32 x86 Debug: 0 warnings, CTest 4/4.
+  * reCT3 freshly configured with an empty `RECT3_RECOMP_GEN_DIR`, Win32 x86 Debug: `rect3.exe` links, CTest 6/6.
+  * Linux is checked by the pull request's CI.
