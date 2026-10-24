@@ -63,6 +63,7 @@ flowchart TB
 * 생성 코드의 include 경로 `${REXBOX_XBOXRECOMP_DIR}/src/kernel`(`recomp_icall_feedback.h`)은 지운다. 이 헤더는 `RECOMP_ICALL_FEEDBACK`를 켤 때만 include되며 rexbox는 켜지 않는다. 그 기능이 필요한 타이틀은 자기 체크아웃 경로를 `target_include_directories`로 더한다.
 * `CMakeLists.txt`의 `REXBOX_XBOXRECOMP_DIR` 캐시 변수와 존재 검사를 지운다.
 * `GEN_DIR` 계약: `recomp_dispatch.c`와 `recomp_types.h`가 있어야 한다. 앞의 것이 없으면 지금처럼 타깃을 만들지 않고 돌아오고, 뒤의 것이 없으면 configure가 실패한다.
+* **생성 코드가 없을 때**(v0.0.12에서 더함): 게임 데이터 없는 트리(타이틀 CI)에서도 앱은 `rexbox_recomp`를 링크하고, `rexbox_recomp`는 레지스터 접근 함수를 부른다. 그래서 `<target>`은 만들지 않되, 그 함수들을 lifter 헤더 없이 스레드별 레지스터 배열로 정의한 `src/recomp/recomp_abi_none.c`를 `<target>_abi`로 타이틀에 링크한다. v0.0.11은 이 경우를 빠뜨려 두 타이틀의 CI 링크가 실패했다. rexbox CI는 `rexbox_recomp_probe`로 이 경로를 링크·검사한다.
 
 링크 순환: 지금은 `rexbox_recomp`가 `recomp_abi.c`의 함수(`rexbox_recomp_get_gprs` 등)를 자기 안에서 해결한다. 옮긴 뒤에는 방향이 둘이 된다. 콜백 껍데기 → C++ 브리지는 생성 코드 쪽이 `rexbox_recomp`를 부르는 보통 방향이다. 반대로 `recomp_runtime.cpp`와 HLE가 쓰는 레지스터 접근 함수(`rexbox_recomp_*`)는 `rexbox_recomp`가 생성 코드 쪽에 정의된 심볼을 부르는 방향이다. 생성 코드 ↔ 타이틀 사이에 이미 있는 순환과 같은 방식(양방향 `target_link_libraries`)으로 선언하고, GNU ld(Linux 프리셋)와 MSVC 둘 다에서 링크를 확인한다.
 
@@ -204,6 +205,7 @@ The diagram above shows the split.
 * The generated code's include path `${REXBOX_XBOXRECOMP_DIR}/src/kernel` (`recomp_icall_feedback.h`) goes away. That header is included only with `RECOMP_ICALL_FEEDBACK` on, which rexbox never sets. A title that wants the feature adds its own checkout's path with `target_include_directories`.
 * The `REXBOX_XBOXRECOMP_DIR` cache variable and its existence check leave `CMakeLists.txt`.
 * `GEN_DIR` contract: it must hold `recomp_dispatch.c` and `recomp_types.h`. Without the first, no target is made (as today). Without the second, configure fails.
+* **Without generated code** (added in v0.0.12): in a tree without game data (a title's CI) the application still links `rexbox_recomp`, which calls the register accessors. So no `<target>` is made, but `src/recomp/recomp_abi_none.c`, which defines those functions on a per-thread register array without the lifter's header, is linked into the title as `<target>_abi`. v0.0.11 missed this case, and both titles' CI failed to link. rexbox's CI links and checks this path with `rexbox_recomp_probe`.
 
 Link cycle: today `rexbox_recomp` resolves `recomp_abi.c`'s functions (`rexbox_recomp_get_gprs`, ...) internally. After the move there are two directions. Callback shells → C++ bridge is the usual one: the generated-code side calls `rexbox_recomp`. The register accessors (`rexbox_recomp_*`) used by `recomp_runtime.cpp` and the HLE go the other way: `rexbox_recomp` calls symbols defined on the generated-code side. This cycle is declared like the existing generated-code ↔ title cycle (`target_link_libraries` in both directions), and linking is checked with both GNU ld (Linux presets) and MSVC.
 
