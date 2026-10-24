@@ -7,9 +7,11 @@
 # lifter, its version and its pipeline are the title's; rexbox knows none of
 # them (docs/design/20261024-i026-drop-xboxrecomp.md).
 #
-# Does nothing (and prints why) when <dir> holds no recomp_dispatch.c, so a
-# tree without game data (CI) still configures; the caller tests
-# `if(TARGET <target>)` for what depends on generated code. <title library>
+# When <dir> holds no recomp_dispatch.c, so a tree without game data (CI)
+# still configures and links, it prints why, creates no <target> (the caller
+# tests `if(TARGET <target>)` for what depends on generated code) and links
+# <title library> to src/recomp/recomp_abi_none.c, the register accessors
+# without the lifter's header. <title library>
 # is the title's own target, which defines the decompiled sub_X functions the
 # generated code calls and calls generated code back: a cycle between two
 # static libraries, declared in both directions so linkers that scan each
@@ -39,6 +41,14 @@ function(rexbox_add_recompiled_library target)
     endif()
     if(NOT EXISTS "${ARG_GEN_DIR}/recomp_dispatch.c")
         message(STATUS "${target}: no recompiled code in ${ARG_GEN_DIR} (run the title's recompilation pipeline)")
+        # The application still links rexbox_recomp, which calls the register
+        # accessors recomp_abi.c would define; recomp_abi_none.c defines them
+        # without the lifter's header. <target> itself is not created, so the
+        # title's `if(TARGET <target>)` still tells it there is no code.
+        add_library(${target}_abi STATIC "${rexbox_SOURCE_DIR}/src/recomp/recomp_abi_none.c")
+        target_link_libraries(${target}_abi PRIVATE rexbox_recomp)  # include/rexbox
+        rexbox_strict_warnings(${target}_abi)
+        target_link_libraries(${ARG_TITLE} PUBLIC ${target}_abi)
         return()
     endif()
     if(NOT EXISTS "${ARG_GEN_DIR}/recomp_types.h")
