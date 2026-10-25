@@ -83,7 +83,7 @@ option(REXBOX_BUILD_TOOLS "Build rexbox_xdk_symbols and the HLE probes" ${PROJEC
 # on every target OS. Static library only; subsystems no HLE module uses stay
 # off. Audio serves the DSOUND HLE, joystick and gamepad the XInput HLE.
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL/CMakeLists.txt")
-    message(FATAL_ERROR "third_party/SDL is missing; run: git submodule update --init")
+    message(FATAL_ERROR "third_party/SDL is missing; run: git submodule update --init --recursive")
 endif()
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
@@ -102,7 +102,7 @@ add_subdirectory(third_party/SDL EXCLUDE_FROM_ALL)
 # rexbox_platform, which owns SDL.
 set(REXBOX_IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui")
 if(NOT EXISTS "${REXBOX_IMGUI_DIR}/imgui.h")
-    message(FATAL_ERROR "third_party/imgui is missing; run: git submodule update --init")
+    message(FATAL_ERROR "third_party/imgui is missing; run: git submodule update --init --recursive")
 endif()
 add_library(imgui STATIC
     "${REXBOX_IMGUI_DIR}/imgui.cpp"
@@ -115,7 +115,7 @@ target_compile_definitions(imgui PUBLIC IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
 # SMAA (MIT): shader source embedded by the D3D8 HLE.
 set(REXBOX_SMAA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/smaa")
 if(NOT EXISTS "${REXBOX_SMAA_DIR}/SMAA.hlsl")
-    message(FATAL_ERROR "third_party/smaa is missing; run: git submodule update --init")
+    message(FATAL_ERROR "third_party/smaa is missing; run: git submodule update --init --recursive")
 endif()
 
 if(REXBOX_BUILD_TOOLS)
@@ -125,7 +125,7 @@ if(REXBOX_BUILD_TOOLS)
     set(XBSDB_BUILD_UNITTEST OFF CACHE BOOL "" FORCE)
     set(XBSDB_INSTALL_LIB OFF CACHE BOOL "" FORCE)
     if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/XbSymbolDatabase/CMakeLists.txt")
-        message(FATAL_ERROR "third_party/XbSymbolDatabase is missing; run: git submodule update --init")
+        message(FATAL_ERROR "third_party/XbSymbolDatabase is missing; run: git submodule update --init --recursive")
     endif()
     add_subdirectory(third_party/XbSymbolDatabase EXCLUDE_FROM_ALL)
     if(NOT MSVC)
