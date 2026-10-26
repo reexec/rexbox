@@ -37,7 +37,7 @@ cmake --preset linux-x64-debug && cmake --build --preset linux-x64-debug && ctes
 ## 4. 아직 없는 것
 
 * 샘플링 프로파일러(`REXBOX_SAMPLE`)는 Linux에서 거부된다.
-* soft-dirty 페이지 추적이 없는 커널(WSL2)에서는 `TakeWrittenPages`가 실패를 돌려주어 D3D8이 버퍼를 모두 비교한다(정확성은 같다).
+* Linux에는 쓰인 페이지 기록이 없다. `TakeWrittenPages`가 늘 실패를 돌려주어 D3D8이 버퍼를 모두 비교한다(정확성은 같다). 커널의 soft-dirty는 프로세스 전체로만 지워져 느리고 기록을 잃으므로 쓰지 않는다([설계 i036](../design/20261027-i036-linux-write-tracking.md)).
 
 ---
 
@@ -50,4 +50,4 @@ A Linux standalone build yields the libraries, the tools and the four probes, as
 1. **Requirements**: the packages in the first block above (build tools, CMake, Ninja, and the development libraries SDL3 compiles against); for an x86 (`-m32`) build also `gcc-multilib`, `g++-multilib` and the `:i386` development packages after `dpkg --add-architecture i386` (the CI's list is in `.github/workflows/ci.yml`).
 2. **Get the repository**: `git clone --recurse-submodules https://github.com/reexec/rexbox.git`.
 3. **Build and test**: `scripts/build_linux.sh <x64|x86> <debug|release>` configures, builds and runs `ctest` through the presets in `CMakePresets.json` (`linux-<arch>-<config>`); output goes to `build/linux-<arch>-<config>/`. x86 builds run with `-msse2 -mfpmath=sse` from `rexbox_apply_host_flags()`, so no x87 excess precision (design i004 §3).
-4. **Not there yet**: the sampling profiler (`REXBOX_SAMPLE`) is refused on Linux; on a kernel without soft-dirty page tracking (WSL2) `TakeWrittenPages` reports failure and D3D8 compares whole buffers (same correctness).
+4. **Not there yet**: the sampling profiler (`REXBOX_SAMPLE`) is refused on Linux; Linux has no written-page records: `TakeWrittenPages` always reports failure and D3D8 compares whole buffers (same correctness); the kernel's soft-dirty bits clear only for the whole process, which is slow and loses records, so they are not used ([design i036](../design/20261027-i036-linux-write-tracking.md)).
