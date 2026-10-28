@@ -159,15 +159,25 @@ uint32_t GlWidth(const Target& target)
     return (target.wide != 0 ? target.wide : target.width) * target.scale;
 }
 
-// The widened width for `surface`: only a back buffer or the depth stencil,
-// which the title draws its whole picture into, is wider than the guest
-// says. Texture render targets are read back by the title at their size.
-uint32_t WideFor(GuestAddress surface, uint32_t height)
+// Color memories bound with a widened depth stencil of their guest size
+// (width << 16 | height): drawn wide too, so the depth lands in place
+// (docs/design/20261029-i038-wide-depth-pairing.md).
+std::unordered_map<uint32_t, uint32_t> g_paired_colors;
+
+// The widened width for `surface`: only a back buffer, the depth stencil,
+// which the title draws its whole picture into, and a color target paired
+// with that depth are wider than the guest says. The title reads a widened
+// target only through its sampling copy, which takes the 4:3 middle.
+uint32_t WideFor(GuestAddress surface, uint32_t width, uint32_t height)
 {
     const HostResource* host = FindResource(surface);
     if (host == nullptr || (host->kind != ResourceKind::kBackBuffer && host->kind != ResourceKind::kDepthStencil))
     {
-        return 0;
+        const auto it = g_paired_colors.find(SurfaceMemory(surface));
+        if (it == g_paired_colors.end() || it->second != (width << 16 | height))
+        {
+            return 0;
+        }
     }
     return WideWidth(g_aspect, height);
 }
@@ -251,7 +261,7 @@ ColorTarget& Color(GuestAddress surface)
     uint32_t width = 0;
     uint32_t height = 0;
     SurfaceSize(surface, &width, &height);
-    const uint32_t wide = WideFor(surface, height);
+    const uint32_t wide = WideFor(surface, width, height);
     GlFunctions& gl = Gl();
     // Only the scale (or the widening) changed: the old pixels are stretched
     // into the new texture, since a surface may be sampled before it is drawn
@@ -360,7 +370,7 @@ const DepthTarget& Depth(GuestAddress surface)
     uint32_t width = 0;
     uint32_t height = 0;
     SurfaceSize(surface, &width, &height);
-    const uint32_t wide = WideFor(surface, height);
+    const uint32_t wide = WideFor(surface, width, height);
     GlFunctions& gl = Gl();
     auto it = g_depths.find(memory);
     if (it != g_depths.end())
@@ -639,6 +649,26 @@ bool BindRenderTarget(GuestAddress color, GuestAddress depth)
             width = target.width;
             height = target.height;
             wide_factor = target.wide != 0 ? static_cast<float>(target.width) / static_cast<float>(target.wide) : 1.0f;
+            if (target.wide != 0 && color != 0)
+            {
+                // GL addresses both attachments alike: a 4:3 color target
+                // would put its depth at the widened depth's left edge
+                // instead of its middle, so it is widened as well.
+                uint32_t color_width = 0;
+                uint32_t color_height = 0;
+                SurfaceSize(color, &color_width, &color_height);
+                if (color_width == target.width && color_height == target.height)
+                {
+                    g_paired_colors[SurfaceMemory(color)] = color_width << 16 | color_height;
+                }
+                else
+                {
+                    ReportOnce(Format("paired %08X", SurfaceMemory(color)),
+                               Format("render target %08X (%ux%u) is bound with the widened depth stencil %08X "
+                                      "(%ux%u): its depth is not in the 4:3 middle",
+                                      color, color_width, color_height, depth, target.width, target.height));
+                }
+            }
         }
         if (color != 0)
         {
@@ -741,7 +771,7 @@ GLuint SampleRenderTarget(GuestAddress data, GuestAddress* surface, uint32_t* wi
         InvalidateGlStateCache();  // binds a texture and a framebuffer
         gl.GenTextures(1, &target.copy);
         gl.BindTexture(kGlTexture2D, target.copy);
-        gl.TexImage2D(kGlTexture2D, 0, static_cast<GLint>(kGlRgba8), static_cast<GLsizei>(GlWidth(target)),
+        gl.TexImage2D(kGlTexture2D, 0, static_cast<GLint>(kGlRgba8), static_cast<GLsizei>(target.width * target.scale),
                       static_cast<GLsizei>(target.height * target.scale), 0, kGlRgba, kGlUnsignedByte, nullptr);
         gl.TexParameteri(kGlTexture2D, kGlTextureMaxLevel, 0);
         gl.GenFramebuffers(1, &target.copy_framebuffer);
@@ -753,14 +783,17 @@ GLuint SampleRenderTarget(GuestAddress data, GuestAddress* surface, uint32_t* wi
     // Draws and clears write only the bound target.
     if (target.bound_since_copy)
     {
-        const GLint w = static_cast<GLint>(GlWidth(target));
+        // A widened target gives the 4:3 middle, the picture the title drew
+        // (docs/design/20261029-i038-wide-depth-pairing.md).
+        const GLint w = static_cast<GLint>(target.width * target.scale);
         const GLint h = static_cast<GLint>(target.height * target.scale);
+        const GLint x = (static_cast<GLint>(GlWidth(target)) - w) / 2;
         gl.BindFramebuffer(kGlReadFramebuffer, ReadableFramebuffer(memory, target));
         gl.BindFramebuffer(kGlDrawFramebuffer, target.copy_framebuffer);
         gl.Disable(kGlScissorTest);
         gl.ColorMask(1, 1, 1, 1);
         // GL keeps D3D's top row at the top; textures have it at row 0.
-        gl.BlitFramebuffer(0, 0, w, h, 0, h, w, 0, kGlColorBufferBit, kGlNearest);
+        gl.BlitFramebuffer(x, 0, x + w, h, 0, h, w, 0, kGlColorBufferBit, kGlNearest);
         RebindCurrentTarget();
         InvalidateGlStateCache();
         // Still bound: later draws go to it, so copy again next time.

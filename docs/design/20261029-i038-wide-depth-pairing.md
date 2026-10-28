@@ -1,6 +1,6 @@
 # 설계: Hor+에서 넓힌 깊이 스텐실과 함께 묶인 4:3 색 타깃 (issue #38)
 
-상태: 설계. 소비자: reexec/reCT3#30. 이전 설계: reJSRF [i085 Hor+ 와이드스크린](https://github.com/nworkers/reJSRF/blob/main/docs/design/20261018-i085-widescreen-horplus.md)(이 저장소로 옮기기 전의 설계).
+상태: 구현됨([작업 지시](../work-orders/20261029-i038-wide-depth-pairing.md), [작업 로그](../work-logs/20261029-i038-wide-depth-pairing.md)). 소비자: reexec/reCT3#30. 이전 설계: reJSRF [i085 Hor+ 와이드스크린](https://github.com/nworkers/reJSRF/blob/main/docs/design/20261018-i085-widescreen-horplus.md)(이 저장소로 옮기기 전의 설계).
 
 ## 1. 요구사항
 
@@ -67,7 +67,7 @@ flowchart LR
 
 # Design: a 4:3 color target bound with the widened depth stencil under Hor+ (issue #38)
 
-Status: design. Consumer: reexec/reCT3#30. Earlier design: reJSRF [i085 Hor+ widescreen](https://github.com/nworkers/reJSRF/blob/main/docs/design/20261018-i085-widescreen-horplus.md) (made before the code moved to this repository).
+Status: implemented ([work order](../work-orders/20261029-i038-wide-depth-pairing.md), [work log](../work-logs/20261029-i038-wide-depth-pairing.md)). Consumer: reexec/reCT3#30. Earlier design: reJSRF [i085 Hor+ widescreen](https://github.com/nworkers/reJSRF/blob/main/docs/design/20261018-i085-widescreen-horplus.md) (made before the code moved to this repository).
 
 ## 1. Requirement
 
