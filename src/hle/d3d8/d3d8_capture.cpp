@@ -200,11 +200,11 @@ void CaptureDraw(const char* name, uint32_t primitive, uint32_t count, GuestAddr
     const auto rsv = [](uint32_t s) { return RenderStateValue(s); };
     const Viewport& vp = state.viewport;
     std::string line = Format(
-        "#%u %s prim %u count %u | vs %08X ps %08X | rt %s vp %u,%u %ux%u | cull %X front %X | z %u f%X w%u | "
+        "#%u %s prim %u count %u | vs %08X ps %08X | rt %s zs %s vp %u,%u %ux%u | cull %X front %X | z %u f%X w%u | "
         "blend %u %X/%X op %X | atest %u f%X ref %X | stencil %u f%X ref %X m%X w%X ops %X/%X/%X | "
         "cw %08X | tf %08X | fog %u | light %u",
         g_index++, name, primitive, count, pipeline.vertex_shader, pipeline.pixel_shader,
-        HeaderText(state.render_target).c_str(), vp.x, vp.y, vp.width, vp.height, rsv(rs::kCullMode),
+        HeaderText(state.render_target).c_str(), HeaderText(state.depth_target).c_str(), vp.x, vp.y, vp.width, vp.height, rsv(rs::kCullMode),
         rsv(rs::kFrontFace), rsv(rs::kZEnable), rsv(rs::kZFunc), rsv(rs::kZWriteEnable), rsv(rs::kAlphaBlendEnable),
         rsv(rs::kSrcBlend), rsv(rs::kDestBlend), rsv(rs::kBlendOp), rsv(rs::kAlphaTestEnable), rsv(rs::kAlphaFunc),
         rsv(rs::kAlphaRef), rsv(rs::kStencilEnable), rsv(rs::kStencilFunc), rsv(rs::kStencilRef),
