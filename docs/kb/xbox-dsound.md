@@ -25,6 +25,8 @@ flowchart LR
 | `DirectSoundDoWork()` | 라이브러리의 주기 작업(알림, 스트림 패킷) / the library's periodic work |
 | 팬 / Pan | 없음. 대신 믹스 빈별 볼륨 / none; per-mix-bin volumes instead |
 | 3D | 버퍼마다 HRTF 또는 I3DL2. `DS3D_DEFERRED` 설정은 `CommitDeferredSettings`로 적용 / per-buffer HRTF or I3DL2; deferred settings apply on `CommitDeferredSettings` |
+| headroom | 음성 음량은 `volume − headroom`으로 저장된다. 만들 때 기본값은 2D 600, 3D(`CTRL3D`)·`MIXIN`·`FXIN` 0 **확인됨**(XDK 4531) / a voice stores `volume − headroom`; the default at creation is 600 for 2D and 0 for 3D, `MIXIN` and `FXIN` (**confirmed**, XDK 4531) |
+| 3D 거리 감쇠 / 3D distance | 최소 거리 이하 0 mB, 최대 거리로 자름, 그 밖 `−2000·log10(1 + R·(d/min − 1))` mB, R = 리스너 rolloff × 버퍼 rolloff(곱은 **추정**), `HEADRELATIVE`는 리스너 위치를 빼지 않음 **확인됨**(XDK 4531, [rexbox 설계 i040](../design/20261102-i040-dsound-3d.md)) / 0 mB at or below the min distance, clamped to the max, else the formula above with R the listener times the buffer rolloff (the product **inferred**); `HEADRELATIVE` skips the listener position (**confirmed**) |
 
 ## 2. 구조체 / Structures
 

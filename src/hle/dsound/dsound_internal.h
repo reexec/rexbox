@@ -36,7 +36,7 @@ constexpr uint32_t kErrOutOfMemory = 0x8007000E;  // E_OUTOFMEMORY
 constexpr uint32_t kErrInvalidCall = 0x88780032;  // DSERR_INVALIDCALL
 
 // DSBUFFERDESC.dwFlags (DSBCAPS_*).
-constexpr uint32_t kCaps3d = 0x00000010;     // DSBCAPS_CTRL3D (assumed)
+constexpr uint32_t kCaps3d = 0x00000010;     // DSBCAPS_CTRL3D (confirmed: XDK 4531 buffer creation)
 constexpr uint32_t kCapsMixIn = 0x00002000;  // DSBCAPS_MIXIN: a submix destination, no data
 constexpr uint32_t kCapsFxIn = 0x00080000;   // DSBCAPS_FXIN: fed by the effects DSP, no data
 
@@ -70,6 +70,15 @@ constexpr uint32_t kWriteAheadFrames = 32;
 
 // DSMIXBIN_* speaker bins; 10 (I3DL2) and up feed the effects DSP.
 constexpr uint32_t kMixBinCount = 31;
+
+// A 2D voice's headroom at creation; 3D and submix voices start at 0
+// (confirmed: XDK 4531 buffer creation, design i040 section 2).
+constexpr uint32_t kDefaultHeadroom2d = 600;
+
+// DS3DMODE_*.
+constexpr uint32_t kMode3dNormal = 0;
+constexpr uint32_t kMode3dHeadRelative = 1;
+constexpr uint32_t kMode3dDisable = 2;
 
 namespace layout
 {
@@ -133,6 +142,46 @@ struct MixBinPair
     int32_t volume = 0;  // hundredths of a dB
 };
 
+struct Vector3
+{
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+};
+
+// A 3D voice's settings (DirectSound 3D defaults) and what Update3d derives
+// from them with the listener's (design i040 section 3).
+struct Spatial
+{
+    Vector3 position;
+    Vector3 velocity;
+    Vector3 cone_orientation{0.0f, 0.0f, 1.0f};
+    uint32_t inside_cone_angle = 360;   // degrees
+    uint32_t outside_cone_angle = 360;  // degrees
+    int32_t cone_outside_volume = 0;    // hundredths of a dB
+    float min_distance = 1.0f;
+    float max_distance = 1e9f;
+    float rolloff = 1.0f;
+    float doppler = 1.0f;
+    uint32_t mode = kMode3dNormal;
+
+    float attenuation = 1.0f;  // distance and cone, as a gain
+    float pan_left = 1.0f;
+    float pan_right = 1.0f;
+    double doppler_ratio = 1.0;  // multiplies the playback rate
+};
+
+struct Listener
+{
+    Vector3 position;
+    Vector3 velocity;
+    Vector3 front{0.0f, 0.0f, 1.0f};
+    Vector3 top{0.0f, 1.0f, 0.0f};
+    float distance_factor = 1.0f;  // meters per unit
+    float doppler = 1.0f;
+    float rolloff = 1.0f;
+};
+
 struct WaveFormat
 {
     uint16_t tag = 0;
@@ -163,11 +212,13 @@ struct Buffer
 
     uint32_t frequency = 0;  // Hz; 0 means the format's rate
     int32_t volume = 0;  // hundredths of a dB
-    uint32_t headroom = 0;  // recorded only
+    uint32_t headroom = 0;  // hundredths of a dB taken off the volume
     bool has_mix_bins = false;
     std::vector<MixBinPair> mix_bins;
     float gain_left[kMaxChannels] = {};
     float gain_right[kMaxChannels] = {};
+
+    Spatial spatial;  // used when flags has kCaps3d
 
     // The last decoded ADPCM block.
     int64_t decoded_block = -1;
@@ -194,6 +245,7 @@ struct DsoundState
     std::unordered_map<GuestAddress, Buffer> buffers;
     uint32_t allocated_bytes = 0;  // buffer memory the HLE allocated
     EffectsImage effects;
+    Listener listener;
     bool trace = false;  // REXBOX_DSOUND_TRACE
 };
 
@@ -212,8 +264,15 @@ void StartOutputLocked();
 uint32_t TotalFrames(const Buffer& buffer);
 uint32_t BytesFromFrames(const Buffer& buffer, uint32_t frames);
 uint32_t FramesFromBytes(const Buffer& buffer, uint32_t bytes);
-// Re-derives the per-channel gains from volume and mix bins.
+// Re-derives the per-channel gains from volume, headroom, mix bins and, for a
+// 3D voice, its spatial attenuation and pan.
 void UpdateGains(Buffer& buffer);
+// Whether the buffer is a 3D voice with 3D processing on.
+bool Is3dActive(const Buffer& buffer);
+// 3D (dsound_3d.cpp). Callers hold the mutex. Re-derives one 3D buffer's
+// attenuation, pan and Doppler ratio, and its gains; or every 3D buffer's.
+void Update3d(Buffer& buffer);
+void Update3dAll();
 // Reads a DSMIXBINS into the buffer (dsound_buffer.cpp).
 void ReadMixBins(Buffer& buffer, GuestAddress mix_bins);
 // Reads a WAVEFORMATEX and tells whether the mixer can decode it (dsound_device.cpp).
@@ -224,9 +283,11 @@ void MixLocked(float* samples, uint32_t frames);
 void RegisterDeviceExports(runtime::HleRegistry& registry);
 void RegisterBufferExports(runtime::HleRegistry& registry);
 void RegisterEffectsExports(runtime::HleRegistry& registry);
+void Register3dExports(runtime::HleRegistry& registry);
 
-// Accepts a setting the HLE records nothing for and does not render (3D,
-// envelopes, filters: design section 7). Pops kStackArgs DWORDs.
+// Accepts a setting the HLE records nothing for and does not render
+// (envelopes, filters, HRTF, I3DL2: design section 7, design i040 section 3).
+// Pops kStackArgs DWORDs.
 template <int kStackArgs>
 void AcceptSetting()
 {

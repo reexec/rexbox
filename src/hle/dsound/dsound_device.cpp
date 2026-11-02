@@ -1,6 +1,6 @@
 // The DirectSound object: creation, reference counts, caps, speaker
-// configuration, buffer creation, and the listener settings (accepted, not
-// rendered).
+// configuration, buffer creation, and the listener settings that are not
+// rendered (the rendered 3D ones are in dsound_3d.cpp).
 
 #include "dsound_internal.h"
 
@@ -162,6 +162,7 @@ uint32_t CreateSoundBuffer(GuestAddress desc, GuestAddress out)
     const GuestAddress format = memory.Read32(desc + layout::kDescFormat);
     const GuestAddress mix_bins = memory.Read32(desc + layout::kDescMixBins);
     const bool submix = (buffer.flags & (kCapsMixIn | kCapsFxIn)) != 0;
+    buffer.headroom = submix || (buffer.flags & kCaps3d) != 0 ? 0 : kDefaultHeadroom2d;
     if (format != 0)
     {
         buffer.valid_format = ReadFormat(format, &buffer.format);
@@ -243,17 +244,11 @@ void RegisterDeviceExports(runtime::HleRegistry& registry)
     registry.AddExport("dsound", "IDirectSound_CreateSoundBuffer", &IDirectSound_CreateSoundBuffer);
     registry.AddExport("dsound", "CDirectSound_CreateSoundBuffer", &IDirectSound_CreateSoundBuffer);
     registry.AddExport("dsound", "DirectSoundCreateBuffer", &DirectSoundCreateBuffer);
-    // Deferred 3D settings and the library's periodic work: nothing to do.
-    registry.AddExport("dsound", "IDirectSound_CommitDeferredSettings", &AcceptSetting<1>);
+    // The library's periodic work: nothing to do.
     registry.AddExport("dsound", "DirectSoundDoWork", &AcceptSetting<0>);
-    // Listener settings (design section 7).
+    // Listener settings not rendered (design section 7; the rendered ones are
+    // in dsound_3d.cpp).
     registry.AddExport("dsound", "IDirectSound_SetAllParameters", &AcceptSetting<3>);
-    registry.AddExport("dsound", "IDirectSound_SetDistanceFactor", &AcceptSetting<3>);
-    registry.AddExport("dsound", "IDirectSound_SetDopplerFactor", &AcceptSetting<3>);
-    registry.AddExport("dsound", "IDirectSound_SetOrientation", &AcceptSetting<8>);
-    registry.AddExport("dsound", "IDirectSound_SetPosition", &AcceptSetting<5>);
-    registry.AddExport("dsound", "IDirectSound_SetRolloffFactor", &AcceptSetting<3>);
-    registry.AddExport("dsound", "IDirectSound_SetVelocity", &AcceptSetting<5>);
     registry.AddExport("dsound", "IDirectSound_SetI3DL2Listener", &AcceptSetting<3>);
     // HRESULT IDirectSound_SetMixBinHeadroom(LPDIRECTSOUND pThis, DWORD dwMixBin, DWORD dwHeadroom):
     // headroom only scales the mixer's output; accepted (XDK 4531 titles call it).

@@ -376,7 +376,7 @@ void IDirectSoundBuffer_SetFrequency()
 }
 
 // HRESULT IDirectSoundBuffer_SetHeadroom(LPDIRECTSOUNDBUFFER pThis, DWORD dwHeadroom)
-// Recorded only (design section 5).
+// The voice plays at its volume minus the headroom (design i040 section 2).
 void IDirectSoundBuffer_SetHeadroom()
 {
     HleCall call;
@@ -389,6 +389,7 @@ void IDirectSoundBuffer_SetHeadroom()
         return;
     }
     buffer->headroom = call.Arg(1);
+    UpdateGains(*buffer);
     call.Return(kDsOk, 2);
 }
 
@@ -587,22 +588,13 @@ void RegisterBufferExports(runtime::HleRegistry& registry)
     registry.AddExport("dsound", "IDirectSoundBuffer_SetRolloffCurve", &AcceptSetting<4>);
     registry.AddExport("dsound", "CDirectSoundBuffer_SetRolloffCurve", &AcceptSetting<4>);
     registry.AddExport("dsound", "XAudioCalculatePitch", &XAudioCalculatePitch);
-    // Envelopes, LFOs, filters and 3D (design section 7).
+    // Envelopes, LFOs, filters, I3DL2 and the 3D settings not rendered (design
+    // section 7; the rendered 3D settings are in dsound_3d.cpp).
     registry.AddExport("dsound", "IDirectSoundBuffer_SetEG", &AcceptSetting<2>);
     registry.AddExport("dsound", "IDirectSoundBuffer_SetLFO", &AcceptSetting<2>);
     registry.AddExport("dsound", "IDirectSoundBuffer_SetFilter", &AcceptSetting<2>);
     registry.AddExport("dsound", "IDirectSoundBuffer_SetAllParameters", &AcceptSetting<3>);
-    registry.AddExport("dsound", "IDirectSoundBuffer_SetConeAngles", &AcceptSetting<4>);
-    registry.AddExport("dsound", "IDirectSoundBuffer_SetConeOrientation", &AcceptSetting<5>);
-    registry.AddExport("dsound", "IDirectSoundBuffer_SetConeOutsideVolume", &AcceptSetting<3>);
-    registry.AddExport("dsound", "IDirectSoundBuffer_SetMaxDistance", &AcceptSetting<3>);
-    registry.AddExport("dsound", "IDirectSoundBuffer_SetMinDistance", &AcceptSetting<3>);
-    registry.AddExport("dsound", "IDirectSoundBuffer_SetMode", &AcceptSetting<3>);
-    registry.AddExport("dsound", "IDirectSoundBuffer_SetPosition", &AcceptSetting<5>);
-    registry.AddExport("dsound", "IDirectSoundBuffer_SetVelocity", &AcceptSetting<5>);
     registry.AddExport("dsound", "IDirectSoundBuffer_SetDistanceFactor", &AcceptSetting<3>);
-    registry.AddExport("dsound", "IDirectSoundBuffer_SetDopplerFactor", &AcceptSetting<3>);
-    registry.AddExport("dsound", "IDirectSoundBuffer_SetRolloffFactor", &AcceptSetting<3>);
     registry.AddExport("dsound", "IDirectSoundBuffer_SetI3DL2Source", &AcceptSetting<3>);
 }
 
