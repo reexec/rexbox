@@ -287,7 +287,6 @@ bool Upload(GuestAddress header, CachedTexture* cached)
     cached->bound.format = format;
     cached->bound.kind = target == kGlTexture3D ? SamplerKind::k3D : SamplerKind::k2D;
     cached->bound.unnormalized = linear;
-    profile::CountTextureUpload(cached->gl_bytes);
     if (D3d8TraceEnabled())
     {
         TraceOnce(Format("upload %02X %u %u", format, cached->bound.width, cached->bound.height),
@@ -428,10 +427,12 @@ BoundTexture ResolveTexture(GuestAddress header, GuestAddress palette)
         cached.palette_data = palette_data;
         cached.palette_common = palette_common;
         cached.palette_hash = paletted && palette != 0 ? SampleHash(palette_data & kPhysicalMask, palette_bytes) : 0;
+        const auto started = std::chrono::steady_clock::now();
         if (!Upload(header, &cached))
         {
             cached.bound.kind = SamplerKind::kNone;
         }
+        profile::CountTextureUpload(cached.gl_bytes, std::chrono::steady_clock::now() - started);
     }
     return cached.bound.kind == SamplerKind::kNone ? BoundTexture{} : cached.bound;
 }

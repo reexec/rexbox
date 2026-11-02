@@ -58,8 +58,9 @@ void CountProgram(bool cached, std::chrono::steady_clock::duration elapsed);
 // A compiled program written to the binary cache; `elapsed` covers getting
 // the binary and writing the entry, which CountProgram does not.
 void CountProgramStore(std::chrono::steady_clock::duration elapsed);
-// A texture (all its levels) uploaded to GL, `bytes` as uploaded.
-void CountTextureUpload(uint64_t bytes);
+// A texture (all its levels) uploaded to GL, `bytes` as uploaded, taking
+// `elapsed` with its conversion.
+void CountTextureUpload(uint64_t bytes, std::chrono::steady_clock::duration elapsed);
 // Called once per present with the present's number; prints a report every
 // n presents and starts or stops sampling.
 void EndFrame(uint32_t frame);

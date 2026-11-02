@@ -75,7 +75,9 @@ std::array<Clock::duration, static_cast<size_t>(Phase::kCount)> g_frame_phases =
 uint32_t g_frame_draws = 0;
 uint32_t g_frame_textures = 0;
 uint64_t g_frame_texture_bytes = 0;
+Clock::duration g_frame_texture_time{};
 uint32_t g_frame_programs = 0;
+Clock::duration g_frame_program_time{};
 uint64_t g_frame_cpu_ns = 0;
 // Slow-frame lines held until FlushSlowFrames writes them.
 constexpr uint32_t kSlowFlushFrames = 600;
@@ -161,7 +163,7 @@ void Add(Phase phase, Clock::duration elapsed)
     g_frame_phases[static_cast<size_t>(phase)] += elapsed;
 }
 
-void CountTextureUpload(uint64_t bytes)
+void CountTextureUpload(uint64_t bytes, Clock::duration elapsed)
 {
     if (!Enabled() || !t_presenting)
     {
@@ -169,6 +171,7 @@ void CountTextureUpload(uint64_t bytes)
     }
     ++g_frame_textures;
     g_frame_texture_bytes += bytes;
+    g_frame_texture_time += elapsed;
 }
 
 void CountDraw(bool program)
@@ -220,6 +223,7 @@ void CountProgram(bool cached, Clock::duration elapsed)
     }
     ++(cached ? g_programs_cached : g_programs_built);
     ++g_frame_programs;
+    g_frame_program_time += elapsed;
     g_program_time += elapsed;
 }
 
@@ -261,10 +265,11 @@ void ReportSlowFrame(uint32_t frame, Clock::duration since_last, uint64_t cpu_ns
                             ms(Phase::kState) + ms(Phase::kDraw);
         g_slow_text += Format(
                      "[d3d8 slow frame] %u: %.1f ms, cpu %.1f | draw phases %.1f (setup %.1f) present %.1f wait %.1f | "
-                     "other %.1f | draws %u, textures %u (%.0f KiB), programs %u%s\n",
+                     "other %.1f | draws %u, textures %u (%.0f KiB, %.1f ms), programs %u (%.1f ms)%s\n",
                      frame, wall, static_cast<double>(cpu_ns - g_frame_cpu_ns) / 1e6, draw, ms(Phase::kSetup),
                      ms(Phase::kPresent), ms(Phase::kWait), wall - measured, g_frame_draws, g_frame_textures,
-                     static_cast<double>(g_frame_texture_bytes) / 1024.0, g_frame_programs,
+                     static_cast<double>(g_frame_texture_bytes) / 1024.0, Milliseconds(g_frame_texture_time),
+                     g_frame_programs, Milliseconds(g_frame_program_time),
                      g_slow_flushed ? " (began with the held reports' write)" : "");
     }
 }
@@ -310,6 +315,7 @@ void EndFrame(uint32_t frame)
     g_frame_phases = {};
     g_frame_draws = g_frame_textures = g_frame_programs = 0;
     g_frame_texture_bytes = 0;
+    g_frame_texture_time = g_frame_program_time = {};
     g_frame_cpu_ns = cpu_ns;
     if (SlowFrameMs() != 0)
     {
