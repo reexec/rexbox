@@ -220,6 +220,14 @@ struct Buffer
 
     Spatial spatial;  // used when flags has kCaps3d
 
+    // Stalled-stream report (design i043): the content hash at the last lap,
+    // how often it changed since Play, how many laps since it last changed,
+    // and whether this stall was reported.
+    uint64_t lap_hash = 0;
+    uint32_t lap_changes = 0;
+    uint32_t unchanged_laps = 0;
+    bool stall_reported = false;
+
     // The last decoded ADPCM block.
     int64_t decoded_block = -1;
     int16_t decoded[kAdpcmSamplesPerBlock * kMaxChannels] = {};

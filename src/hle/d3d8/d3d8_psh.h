@@ -84,14 +84,25 @@ uint32_t TextureMode(const Definition& definition, uint32_t stage);
 // (texture modes other than 2D/3D/cube/pass-through, compare mode).
 std::string GenerateFragmentShader(const Key& key, bool gles, std::string* unsupported);
 
+// The logical render states that hold the NV2A combiner constants: COMBINER_
+// FACTOR0 of stages 0..7 (0xA60..), COMBINER_FACTOR1 (0xA80..), and the final
+// combiner's SPECULAR_FOG_FACTOR0/1 (0x1E20, 0x1E24), as D3DCOLOR.
+constexpr uint32_t kFactorStateCount = 18;
+constexpr uint32_t kFactorStates[kFactorStateCount] = {10, 11, 12, 13, 14, 15, 16, 17, 18,
+                                                       19, 20, 21, 22, 23, 24, 25, 43, 44};
+
 // The per-stage constants for a draw: a stage's c0/c1 come from the
 // SetPixelShaderConstant register its PSC0/PSC1 mapping nibble names (0xF:
 // none) when bit r of `written` says that register was written since the
 // shader was set, else from the definition's PSConstant0/1 (stage 0's for
 // every stage unless the combiner count says the constants are unique), as
 // SetPixelShader loads them (docs/design/20261017-i078-psh-definition-constants.md).
+// A combiner constant render state written since then (bit i of
+// `factors_written` for kFactorStates[i], its value factors[i]) overrides
+// both, as the NV2A register it names is the constant the combiner reads.
 void StageConstants(const Definition& definition, const float pixel_constants[kPixelConstants][4], uint32_t written,
-                    float c0[kStages][4], float c1[kStages][4], float final_c0[4], float final_c1[4]);
+                    const uint32_t factors[kFactorStateCount], uint32_t factors_written, float c0[kStages][4],
+                    float c1[kStages][4], float final_c0[4], float final_c1[4]);
 
 }  // namespace rexbox::hle::d3d8::psh
 

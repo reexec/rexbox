@@ -1,5 +1,6 @@
 #include "rexbox/runtime/thread_activity.h"
 
+#include "rexbox/platform/stack_report.h"
 #include "rexbox/runtime/environment.h"
 #include "rexbox/runtime/guest_lock.h"
 #include "rexbox/runtime/guest_memory.h"
@@ -234,18 +235,19 @@ std::string DescribeThread(ThreadRecord& record, int64_t now)
     return line;
 }
 
-void Report(int64_t now, int64_t since_present)
+// One line per guest thread under `prefix`, the guest memory when
+// REXBOX_STALL_DUMP names a file, then each thread's host stack where the
+// platform can print it.
+void PrintThreads(const char* prefix, int64_t now)
 {
     std::vector<ThreadRecord*> records;
     {
         std::lock_guard<std::mutex> lock(g_records_mutex);
         records = g_records;
     }
-    std::fprintf(stderr, "[stall] no present for %.1f s (last present %u); guest threads:\n", Seconds(since_present),
-                 g_last_frame.load());
     for (ThreadRecord* record : records)
     {
-        std::fprintf(stderr, "[stall]   %s\n", DescribeThread(*record, now).c_str());
+        std::fprintf(stderr, "%s   %s\n", prefix, DescribeThread(*record, now).c_str());
     }
     // REXBOX_STALL_DUMP=<file>: the guest address space, for offline analysis.
     GuestMemory* memory = Env().memory;
@@ -255,10 +257,22 @@ void Report(int64_t now, int64_t since_present)
         {
             std::fwrite(memory->base(), 1, memory->size(), dump);
             std::fclose(dump);
-            std::fprintf(stderr, "[stall] guest memory written to %s\n", path);
+            std::fprintf(stderr, "%s guest memory written to %s\n", prefix, path);
         }
     }
+    std::fprintf(stderr, "%s host stacks of the guest threads:\n", prefix);
+    if (!platform::PrintThreadStacks())
+    {
+        std::fprintf(stderr, "%s   (not available on this platform)\n", prefix);
+    }
     std::fflush(stderr);
+}
+
+void Report(int64_t now, int64_t since_present)
+{
+    std::fprintf(stderr, "[stall] no present for %.1f s (last present %u); guest threads:\n", Seconds(since_present),
+                 g_last_frame.load());
+    PrintThreads("[stall]", now);
 }
 
 void Monitor(int64_t threshold_ns)
@@ -304,8 +318,15 @@ void NoteThreadName(std::string name, uint32_t guest_id)
 {
     ThreadRecord& record = Self();
     record.guest_id.store(guest_id, std::memory_order_relaxed);
+    platform::RegisterStackReportThread(name.c_str());
     std::lock_guard<std::mutex> lock(record.name_mutex);
     record.name = std::move(name);
+}
+
+void ReportGuestThreads(const char* prefix, const char* why)
+{
+    std::fprintf(stderr, "%s %s; guest threads:\n", prefix, why);
+    PrintThreads(prefix, NowNs());
 }
 
 std::string CurrentThreadName()

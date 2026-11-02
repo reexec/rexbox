@@ -49,6 +49,13 @@ uint32_t PixelShaderConstantsWritten();
 uint64_t PixelShaderConstantsVersion();
 void ForgetPixelShaderConstants();
 
+// The register-combiner constant render states (D3DRS_PSCONSTANT0_0..7 and
+// PSCONSTANT1_0..7, NV2A COMBINER_FACTOR0/1, and the final combiner's two)
+// written since the last SetPixelShader: titles that drive NV2A states set the
+// hardware's constants this way. Bit i: psh::kFactorStates[i].
+void NoteCombinerFactorWritten(uint32_t state);
+uint32_t CombinerFactorsWritten();
+
 // Writes the screen-space constants c[58] and c[59] for the viewport, as the
 // library does when the viewport changes (vsh::ViewportConstants).
 void WriteViewportConstants(uint32_t x, uint32_t y, uint32_t width, uint32_t height);

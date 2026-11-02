@@ -530,7 +530,8 @@ std::string GenerateFragmentShader(const Key& key, bool gles, std::string* unsup
 }
 
 void StageConstants(const Definition& definition, const float pixel_constants[kPixelConstants][4], uint32_t written,
-                    float c0[kStages][4], float c1[kStages][4], float final_c0[4], float final_c1[4])
+                    const uint32_t factors[kFactorStateCount], uint32_t factors_written, float c0[kStages][4],
+                    float c1[kStages][4], float final_c0[4], float final_c1[4])
 {
     const auto unpack = [](uint32_t argb, float out[4]) {
         out[0] = static_cast<float>((argb >> 16) & 0xFF) / 255.0f;
@@ -558,9 +559,26 @@ void StageConstants(const Definition& definition, const float pixel_constants[kP
         const uint32_t own1 = (count_word & kCountUniqueC1) != 0 ? s : 0;
         pick((definition[word::kC0Mapping] >> (4 * s)) & 0xF, definition[word::kConstant0 + own0], c0[s]);
         pick((definition[word::kC1Mapping] >> (4 * s)) & 0xF, definition[word::kConstant1 + own1], c1[s]);
+        // The hardware registers, when the title set them itself.
+        if ((factors_written & (1u << own0)) != 0)
+        {
+            unpack(factors[own0], c0[s]);
+        }
+        if ((factors_written & (1u << (8 + own1))) != 0)
+        {
+            unpack(factors[8 + own1], c1[s]);
+        }
     }
     pick(definition[word::kFinalConstants] & 0xF, definition[word::kFinalConstant0], final_c0);
     pick((definition[word::kFinalConstants] >> 4) & 0xF, definition[word::kFinalConstant1], final_c1);
+    if ((factors_written & (1u << 16)) != 0)
+    {
+        unpack(factors[16], final_c0);
+    }
+    if ((factors_written & (1u << 17)) != 0)
+    {
+        unpack(factors[17], final_c1);
+    }
 }
 
 }  // namespace rexbox::hle::d3d8::psh
