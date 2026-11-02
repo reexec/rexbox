@@ -16,7 +16,6 @@ namespace rexbox::hle::dsound
 namespace
 {
 
-constexpr float kCenterGain = 0.70710678f;  // a center or LFE bin feeds both sides at -3 dB
 
 // IMA ADPCM step sizes and index adjustments.
 constexpr int16_t kAdpcmSteps[89] = {
@@ -132,29 +131,32 @@ float SampleAt(Buffer& buffer, uint32_t frame, uint32_t channel)
     return static_cast<float>(value) / 32768.0f;
 }
 
-// Adds a mix bin's contribution for one channel of the voice.
+// Adds a mix bin's contribution for one channel of the voice, as power: the
+// speakers of one side sum their energy, as a room does, the center feeds each
+// side half its power, and the LFE is left out of the stereo fold-down
+// (design i040 section 3). UpdateGains takes the square roots.
 void AddBin(Buffer& buffer, uint32_t channel, uint32_t bin, float gain)
 {
+    const float power = gain * gain;
     switch (bin)
     {
     case 0:  // FRONT_LEFT
     case 4:  // BACK_LEFT
     case 6:  // XTLK_FRONT_LEFT
     case 8:  // XTLK_BACK_LEFT
-        buffer.gain_left[channel] += gain;
+        buffer.gain_left[channel] += power;
         break;
     case 1:  // FRONT_RIGHT
     case 5:  // BACK_RIGHT
     case 7:  // XTLK_FRONT_RIGHT
     case 9:  // XTLK_BACK_RIGHT
-        buffer.gain_right[channel] += gain;
+        buffer.gain_right[channel] += power;
         break;
     case 2:  // FRONT_CENTER
-    case 3:  // LOW_FREQUENCY
-        buffer.gain_left[channel] += gain * kCenterGain;
-        buffer.gain_right[channel] += gain * kCenterGain;
+        buffer.gain_left[channel] += 0.5f * power;
+        buffer.gain_right[channel] += 0.5f * power;
         break;
-    default:  // I3DL2 and FXSEND_n feed the effects DSP, which does not run
+    default:  // LOW_FREQUENCY; I3DL2 and FXSEND_n feed the effects DSP, which does not run
         break;
     }
 }
@@ -296,8 +298,8 @@ void UpdateGains(Buffer& buffer)
     {
         if (channels == 1)
         {
-            buffer.gain_left[0] = master;
-            buffer.gain_right[0] = master;
+            buffer.gain_left[0] = master * master;
+            buffer.gain_right[0] = master * master;
         }
         else
         {
@@ -314,6 +316,11 @@ void UpdateGains(Buffer& buffer)
             const MixBinPair& pair = buffer.mix_bins[k];
             AddBin(buffer, static_cast<uint32_t>(k % channels), pair.bin, master * VolumeGain(pair.volume));
         }
+    }
+    for (uint32_t c = 0; c < channels; ++c)
+    {
+        buffer.gain_left[c] = std::sqrt(buffer.gain_left[c]);
+        buffer.gain_right[c] = std::sqrt(buffer.gain_right[c]);
     }
     if (Is3dActive(buffer))
     {

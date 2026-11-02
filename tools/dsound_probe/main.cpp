@@ -20,6 +20,7 @@
 #include <cstring>
 #include <initializer_list>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
@@ -501,6 +502,33 @@ void ProbeHeadroomAnd3d()
     Call("IDirectSoundBuffer_SetHeadroom", {buffer, 600});
     out = Render(4);
     Check(Near(out[0], 0.5f * minus6 * minus6), "volume and headroom add up: -600 - 600 is -12 dB");
+    Call("IDirectSoundBuffer_Release", {buffer});
+
+    // Stereo fold-down by power: FL, BL and LFE at 0 dB on the left is
+    // sqrt(1 + 1) (LFE left out); the center alone feeds each side -3 dB.
+    const std::initializer_list<std::pair<uint32_t, int32_t>> surround = {{0, 0}, {1, 0}, {2, -10000}, {3, 0}, {4, 0}, {5, 0}};
+    uint32_t index = 0;
+    for (const auto& [bin, volume] : surround)
+    {
+        g_memory->Write32(kBins + 8 + 8 * index, bin);
+        g_memory->Write32(kBins + 12 + 8 * index, static_cast<uint32_t>(volume));
+        ++index;
+    }
+    buffer = CreateBuffer(1, 1, 48000, 16, 2, 4800, 0, 6);
+    Fill16(DataOf(buffer), 4800, 16384);
+    Call("IDirectSoundBuffer_Play", {buffer, 0, 0, 1});
+    out = Render(4);
+    Check(Near(out[0], 0.5f * std::sqrt(2.0f)) && Near(out[1], 0.5f * std::sqrt(2.0f)),
+          "front and back bins sum by power, the LFE is left out of the stereo fold-down");
+    Call("IDirectSoundBuffer_Release", {buffer});
+    g_memory->Write32(kBins + 8, 2);
+    g_memory->Write32(kBins + 12, 0);
+    buffer = CreateBuffer(1, 1, 48000, 16, 2, 4800, 0, 1);
+    Fill16(DataOf(buffer), 4800, 16384);
+    Call("IDirectSoundBuffer_Play", {buffer, 0, 0, 1});
+    out = Render(4);
+    Check(Near(out[0], 0.5f * std::sqrt(0.5f)) && Near(out[1], 0.5f * std::sqrt(0.5f)),
+          "the center bin feeds each side at -3 dB");
     Call("IDirectSoundBuffer_Release", {buffer});
 
     constexpr uint32_t k3d = 0x10;
