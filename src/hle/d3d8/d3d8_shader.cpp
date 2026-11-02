@@ -147,6 +147,7 @@ float g_vertex_constants[kVertexConstantCount][4] = {};
 uint64_t g_vertex_constants_version = 1;
 float g_pixel_constants[kPixelConstantCount][4] = {};
 uint32_t g_pixel_constants_written = 0;  // since the last SetPixelShader
+uint32_t g_combiner_factors_written = 0;  // since the last SetPixelShader (psh::kFactorStates)
 // Bumped whenever a pixel shader's constants may differ: a constant set, the
 // written bits reset, or a pixel shader created or deleted (its definition
 // may come back at the same host address).
@@ -348,7 +349,26 @@ uint64_t PixelShaderConstantsVersion()
 void ForgetPixelShaderConstants()
 {
     g_pixel_constants_written = 0;
+    g_combiner_factors_written = 0;
     ++g_pixel_constants_version;
+}
+
+void NoteCombinerFactorWritten(uint32_t state)
+{
+    for (uint32_t i = 0; i < psh::kFactorStateCount; ++i)
+    {
+        if (psh::kFactorStates[i] == state)
+        {
+            g_combiner_factors_written |= 1u << i;
+            ++g_pixel_constants_version;
+            return;
+        }
+    }
+}
+
+uint32_t CombinerFactorsWritten()
+{
+    return g_combiner_factors_written;
 }
 
 void WriteViewportConstants(uint32_t x, uint32_t y, uint32_t width, uint32_t height)

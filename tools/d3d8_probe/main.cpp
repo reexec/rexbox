@@ -702,13 +702,24 @@ void CheckPixelShaders()
     float c1[psh::kStages][4];
     float f0[4];
     float f1[4];
-    psh::StageConstants(def, pixel_constants, 0x1u, c0, c1, f0, f1);
+    const uint32_t no_factors[psh::kFactorStateCount] = {};
+    psh::StageConstants(def, pixel_constants, 0x1u, no_factors, 0, c0, c1, f0, f1);
     Expect(c0[1][0] == 0.5f && c0[1][3] == 1.0f, "stage 1 c0 comes from SetPixelShaderConstant(0)");
     Expect(c0[0][0] == 1.0f && std::fabs(c0[0][3] - 128.0f / 255.0f) < 1e-6f, "stage 0 c0 is its own D3DCOLOR");
     Expect(c1[3][0] == 0.0f && f0[0] == 0.0f, "unmapped c1 and final constants come from the definition");
-    psh::StageConstants(def, pixel_constants, 0x0u, c0, c1, f0, f1);
+    psh::StageConstants(def, pixel_constants, 0x0u, no_factors, 0, c0, c1, f0, f1);
     Expect(c0[1][0] == static_cast<float>((def[psh::word::kConstant0 + 1] >> 16) & 0xFF) / 255.0f,
            "a mapped register not written since SetPixelShader leaves the definition's constant");
+    // Combiner constant render states written since SetPixelShader are the
+    // constants: COMBINER_FACTOR0 of stage 1 and the final combiner's first.
+    uint32_t factors[psh::kFactorStateCount] = {};
+    factors[1] = 0x80FF0000;
+    factors[16] = 0xFF00FF00;
+    psh::StageConstants(def, pixel_constants, 0x1u, factors, (1u << 1) | (1u << 16), c0, c1, f0, f1);
+    Expect(c0[1][0] == 1.0f && std::fabs(c0[1][3] - 128.0f / 255.0f) < 1e-6f && c0[1][1] == 0.0f,
+           "a written COMBINER_FACTOR0 render state overrides SetPixelShaderConstant and the definition");
+    Expect(f0[1] == 1.0f && f0[3] == 1.0f && f0[0] == 0.0f, "a written final combiner constant render state applies");
+    Expect(c0[0][0] == 1.0f && std::fabs(c0[0][3] - 128.0f / 255.0f) < 1e-6f, "unwritten factors keep the definition");
 
     // A final combiner: A = fog.a, B = r0, C = fog.rgb, D = 0; G = r0.a.
     psh::Definition fin = def;

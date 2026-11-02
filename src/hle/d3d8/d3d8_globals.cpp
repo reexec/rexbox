@@ -2,6 +2,7 @@
 
 #include "d3d8_internal.h"
 #include "d3d8_render_state.h"
+#include "d3d8_shader.h"
 
 #include <atomic>
 #include <cstring>
@@ -141,6 +142,7 @@ void SetRenderStateValue(uint32_t state, uint32_t value)
     {
         SetRenderStateSlot(slot, value);
     }
+    NoteCombinerFactorWritten(state);
 }
 
 uint32_t TextureStateValue(uint32_t stage, uint32_t slot)
