@@ -77,6 +77,11 @@ uint32_t g_frame_textures = 0;
 uint64_t g_frame_texture_bytes = 0;
 uint32_t g_frame_programs = 0;
 uint64_t g_frame_cpu_ns = 0;
+// Slow-frame lines held until FlushSlowFrames writes them.
+constexpr uint32_t kSlowFlushFrames = 600;
+std::string g_slow_text;
+uint32_t g_slow_flush_count = 0;
+bool g_slow_flushed = false;  // the frame being measured began with that write
 
 struct SampleWindow
 {
@@ -254,13 +259,30 @@ void ReportSlowFrame(uint32_t frame, Clock::duration since_last, uint64_t cpu_ns
         const double draw = ms(Phase::kIndices) + ms(Phase::kSetup) + ms(Phase::kTarget) + ms(Phase::kUpload) +
                             ms(Phase::kAttributes) + ms(Phase::kConstants) + ms(Phase::kTextures) +
                             ms(Phase::kState) + ms(Phase::kDraw);
-        std::fprintf(stderr,
+        g_slow_text += Format(
                      "[d3d8 slow frame] %u: %.1f ms, cpu %.1f | draw phases %.1f (setup %.1f) present %.1f wait %.1f | "
-                     "other %.1f | draws %u, textures %u (%.0f KiB), programs %u\n",
+                     "other %.1f | draws %u, textures %u (%.0f KiB), programs %u%s\n",
                      frame, wall, static_cast<double>(cpu_ns - g_frame_cpu_ns) / 1e6, draw, ms(Phase::kSetup),
                      ms(Phase::kPresent), ms(Phase::kWait), wall - measured, g_frame_draws, g_frame_textures,
-                     static_cast<double>(g_frame_texture_bytes) / 1024.0, g_frame_programs);
+                     static_cast<double>(g_frame_texture_bytes) / 1024.0, g_frame_programs,
+                     g_slow_flushed ? " (began with the held reports' write)" : "");
     }
+}
+
+// Writes the held slow-frame lines every kSlowFlushFrames frames. A line
+// written as each long frame ended cost the next frame the write (over 10 ms
+// to a redirected file), which held a 60 fps title at 30 fps.
+void FlushSlowFrames()
+{
+    g_slow_flushed = false;
+    if (g_slow_text.empty() || ++g_slow_flush_count < kSlowFlushFrames)
+    {
+        return;
+    }
+    std::fputs(g_slow_text.c_str(), stderr);
+    g_slow_text.clear();
+    g_slow_flush_count = 0;
+    g_slow_flushed = true;
 }
 
 void EndFrame(uint32_t frame)
@@ -289,6 +311,10 @@ void EndFrame(uint32_t frame)
     g_frame_draws = g_frame_textures = g_frame_programs = 0;
     g_frame_texture_bytes = 0;
     g_frame_cpu_ns = cpu_ns;
+    if (SlowFrameMs() != 0)
+    {
+        FlushSlowFrames();
+    }
     g_last_present = now;
     if (interval == 0)
     {
