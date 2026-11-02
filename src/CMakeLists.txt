@@ -59,6 +59,7 @@ target_link_libraries(rexbox_hle_xapi PUBLIC rexbox_runtime)
 # DirectSound on the platform audio contract (the APU it would drive is not
 # emulated). One file per area; dsound_hle.cpp only registers.
 add_library(rexbox_hle_dsound STATIC
+    hle/dsound/dsound_3d.cpp
     hle/dsound/dsound_buffer.cpp
     hle/dsound/dsound_device.cpp
     hle/dsound/dsound_effects.cpp

@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <initializer_list>
 #include <string>
 #include <vector>
@@ -137,9 +138,10 @@ std::vector<float> Render(uint32_t frames)
 GuestAddress g_device = 0;
 
 // Creates a buffer: format tag, channels, rate, bits, block align, size, flags,
-// optional mix bins (count, pairs at kBins + 8).
+// optional mix bins (count, pairs at kBins + 8). Unless `keep_headroom`, the
+// headroom is set to 0 so that levels read as the volume alone.
 GuestAddress CreateBuffer(uint16_t tag, uint16_t channels, uint32_t rate, uint16_t bits, uint16_t align,
-                          uint32_t bytes, uint32_t flags = 0, uint32_t bin_count = 0)
+                          uint32_t bytes, uint32_t flags = 0, uint32_t bin_count = 0, bool keep_headroom = false)
 {
     g_memory->Fill(kDesc, 0, 0x18);
     g_memory->Fill(kFormat, 0, 0x14);
@@ -161,8 +163,14 @@ GuestAddress CreateBuffer(uint16_t tag, uint16_t channels, uint32_t rate, uint16
     }
     g_memory->Write32(kOut, 0);
     const uint32_t hr = Call("IDirectSound_CreateSoundBuffer", {g_device, kDesc, kOut, 0});
-    return hr == kOk ? Read32(kOut) : 0;
+    const GuestAddress buffer = hr == kOk ? Read32(kOut) : 0;
+    if (buffer != 0 && !keep_headroom)
+    {
+        Call("IDirectSoundBuffer_SetHeadroom", {buffer, 0});
+    }
+    return buffer;
 }
+
 
 // Fills a buffer's data with one 16-bit value per sample.
 void Fill16(GuestAddress data, uint32_t bytes, int16_t value)
@@ -463,6 +471,105 @@ void ProbeXdk4531()
     Call("IDirectSoundBuffer_Release", {buffer});
 }
 
+uint32_t FloatBits(float value)
+{
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, sizeof(bits));
+    return bits;
+}
+
+// A looping 16-bit mono buffer of constant 0.5, playing; its first rendered
+// frame shows its left and right gains times 0.5.
+GuestAddress PlayingConstant(uint32_t flags, bool keep_headroom)
+{
+    const GuestAddress buffer = CreateBuffer(1, 1, 48000, 16, 2, 4800, flags, 0, keep_headroom);
+    Fill16(DataOf(buffer), 4800, 16384);
+    Call("IDirectSoundBuffer_Play", {buffer, 0, 0, 1});
+    return buffer;
+}
+
+void ProbeHeadroomAnd3d()
+{
+    const float minus6 = std::pow(10.0f, -0.3f);
+    GuestAddress buffer = PlayingConstant(0, true);
+    std::vector<float> out = Render(4);
+    Check(Near(out[0], 0.5f * minus6) && Near(out[1], 0.5f * minus6), "a 2D buffer starts at headroom 600 (-6 dB)");
+    Call("IDirectSoundBuffer_SetHeadroom", {buffer, 0});
+    out = Render(4);
+    Check(Near(out[0], 0.5f), "SetHeadroom(0) restores the volume");
+    Call("IDirectSoundBuffer_SetVolume", {buffer, static_cast<uint32_t>(-600)});
+    Call("IDirectSoundBuffer_SetHeadroom", {buffer, 600});
+    out = Render(4);
+    Check(Near(out[0], 0.5f * minus6 * minus6), "volume and headroom add up: -600 - 600 is -12 dB");
+    Call("IDirectSoundBuffer_Release", {buffer});
+
+    constexpr uint32_t k3d = 0x10;
+    buffer = PlayingConstant(k3d, true);
+    out = Render(4);
+    Check(Near(out[0], 0.5f) && Near(out[1], 0.5f), "a 3D buffer starts at headroom 0, centered at the listener");
+    Call("IDirectSoundBuffer_SetMinDistance", {buffer, FloatBits(5.0f), 0});
+    Call("IDirectSoundBuffer_SetPosition", {buffer, 0, 0, FloatBits(4.0f), 0});
+    out = Render(4);
+    Check(Near(out[0], 0.5f) && Near(out[1], 0.5f), "within the min distance: no attenuation, centered");
+    // R = 1 x 1, d / min = 3: -2000 log10(3) mB, a gain of 1/3.
+    Call("IDirectSoundBuffer_SetPosition", {buffer, 0, 0, FloatBits(15.0f), 0});
+    out = Render(4);
+    Check(Near(out[0], 0.5f / 3.0f), "distance 15, min 5, rolloff 1: a gain of 1/3");
+    Call("IDirectSound_SetRolloffFactor", {g_device, FloatBits(0.5f), 0});
+    Call("IDirectSoundBuffer_SetRolloffFactor", {buffer, FloatBits(0.5f), 0});
+    out = Render(4);
+    Check(Near(out[0], 0.5f / 1.5f), "rolloff is the listener's times the buffer's: 1 + 0.25 x 2");
+    Call("IDirectSound_SetRolloffFactor", {g_device, FloatBits(1.0f), 0});
+    Call("IDirectSoundBuffer_SetRolloffFactor", {buffer, FloatBits(1.0f), 0});
+    Call("IDirectSoundBuffer_SetMaxDistance", {buffer, FloatBits(10.0f), 0});
+    out = Render(4);
+    Check(Near(out[0], 0.5f / 2.0f), "the distance is clamped to the max distance (10): a gain of 1/2");
+    Call("IDirectSoundBuffer_SetMaxDistance", {buffer, FloatBits(1e9f), 0});
+    Call("IDirectSoundBuffer_SetPosition", {buffer, FloatBits(3.0f), 0, 0, 0});
+    out = Render(4);
+    Check(Near(out[0], 0.0f) && Near(out[1], 0.5f), "a source to the right plays on the right only");
+    Call("IDirectSoundBuffer_SetPosition", {buffer, FloatBits(-1.5f), 0, FloatBits(1.5f), 0});
+    out = Render(4);
+    Check(Near(out[0], 0.5f) && Near(out[1], 0.5f * (1.0f - std::sqrt(0.5f))), "front-left: the right side drops");
+    Call("IDirectSound_SetPosition", {g_device, FloatBits(-3.0f), 0, FloatBits(1.5f), 0});
+    out = Render(4);
+    Check(Near(out[0], 0.0f) && Near(out[1], 0.5f), "moving the listener left puts the source on its right");
+    Call("IDirectSoundBuffer_SetMode", {buffer, 1, 0});  // DS3DMODE_HEADRELATIVE
+    out = Render(4);
+    Check(Near(out[0], 0.5f) && Near(out[1], 0.5f * (1.0f - std::sqrt(0.5f))),
+          "head-relative: the position ignores the listener's");
+    Call("IDirectSoundBuffer_SetMode", {buffer, 2, 0});  // DS3DMODE_DISABLE
+    out = Render(4);
+    Check(Near(out[0], 0.5f) && Near(out[1], 0.5f), "3D disabled: plays as 2D");
+    Call("IDirectSound_SetPosition", {g_device, 0, 0, 0, 0});
+    Call("IDirectSoundBuffer_SetMode", {buffer, 0, 0});
+
+    // Cone: facing away (+z) from a listener at the origin with the source at
+    // z = 2, so the angle to the listener is 180 degrees: outside.
+    Call("IDirectSoundBuffer_SetPosition", {buffer, 0, 0, FloatBits(2.0f), 0});
+    Call("IDirectSoundBuffer_SetConeAngles", {buffer, 90, 180, 0});
+    Call("IDirectSoundBuffer_SetConeOutsideVolume", {buffer, static_cast<uint32_t>(-600), 0});
+    out = Render(4);
+    Check(Near(out[0], 0.5f * minus6), "behind the cone: the outside volume (-6 dB)");
+    Call("IDirectSoundBuffer_SetConeOrientation", {buffer, 0, 0, FloatBits(-1.0f), 0});
+    out = Render(4);
+    Check(Near(out[0], 0.5f), "facing the listener: full volume");
+    Call("IDirectSoundBuffer_SetConeAngles", {buffer, 360, 360, 0});
+
+    // Doppler: a source approaching at a tenth of the speed of sound plays
+    // 1 / 0.9 times faster.
+    Call("IDirectSoundBuffer_SetPosition", {buffer, 0, 0, FloatBits(1000.0f), 0});
+    Call("IDirectSoundBuffer_SetVelocity", {buffer, 0, 0, FloatBits(-34.33f), 0});
+    uint32_t play = 0;
+    uint32_t write = 0;
+    Call("IDirectSoundBuffer_SetCurrentPosition", {buffer, 0});
+    Render(900);
+    Cursors(buffer, &play, &write);
+    Check(play == 2000, "an approaching source (v = c / 10) plays 1/0.9 times faster");
+    Call("IDirectSoundBuffer_SetVelocity", {buffer, 0, 0, 0, 0});
+    Call("IDirectSoundBuffer_Release", {buffer});
+}
+
 }  // namespace
 
 int main()
@@ -493,6 +600,7 @@ int main()
     ProbeEffects();
     ProbeAccepted();
     ProbeXdk4531();
+    ProbeHeadroomAnd3d();
 
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;

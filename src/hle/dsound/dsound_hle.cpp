@@ -61,6 +61,7 @@ void RegisterDsoundHle(runtime::HleRegistry& registry)
     RegisterDeviceExports(registry);
     RegisterBufferExports(registry);
     RegisterEffectsExports(registry);
+    Register3dExports(registry);
 }
 
 void SetDsoundOutput(DsoundOutput output)

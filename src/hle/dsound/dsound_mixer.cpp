@@ -182,7 +182,8 @@ void MixBuffer(Buffer& buffer, float* samples, uint32_t frames)
         }
     }
     const uint32_t rate = buffer.frequency != 0 ? buffer.frequency : buffer.format.rate;
-    const double step = static_cast<double>(rate) / static_cast<double>(kOutputRate);
+    const double doppler = Is3dActive(buffer) ? buffer.spatial.doppler_ratio : 1.0;
+    const double step = static_cast<double>(rate) * doppler / static_cast<double>(kOutputRate);
     const uint32_t channels = buffer.format.channels;
     const uint32_t end = buffer.looping ? loop_end : total;
     double position = buffer.position;
@@ -288,25 +289,42 @@ void UpdateGains(Buffer& buffer)
     std::fill(std::begin(buffer.gain_left), std::end(buffer.gain_left), 0.0f);
     std::fill(std::begin(buffer.gain_right), std::end(buffer.gain_right), 0.0f);
     const uint32_t channels = std::clamp<uint32_t>(buffer.format.channels, 1, kMaxChannels);
-    const float master = VolumeGain(buffer.volume);
+    // The original stores the volume minus the headroom (design i040 section 2).
+    const int64_t volume = static_cast<int64_t>(buffer.volume) - static_cast<int64_t>(buffer.headroom);
+    const float master = VolumeGain(static_cast<int32_t>(std::max<int64_t>(volume, -10000)));
     if (!buffer.has_mix_bins)
     {
         if (channels == 1)
         {
             buffer.gain_left[0] = master;
             buffer.gain_right[0] = master;
-            return;
         }
+        else
+        {
+            for (uint32_t c = 0; c < channels; ++c)
+            {
+                AddBin(buffer, c, c, master);
+            }
+        }
+    }
+    else
+    {
+        for (size_t k = 0; k < buffer.mix_bins.size(); ++k)
+        {
+            const MixBinPair& pair = buffer.mix_bins[k];
+            AddBin(buffer, static_cast<uint32_t>(k % channels), pair.bin, master * VolumeGain(pair.volume));
+        }
+    }
+    if (Is3dActive(buffer))
+    {
+        // A 3D voice: the mean of its speaker gains, attenuated and panned.
+        const Spatial& spatial = buffer.spatial;
         for (uint32_t c = 0; c < channels; ++c)
         {
-            AddBin(buffer, c, c, master);
+            const float base = 0.5f * (buffer.gain_left[c] + buffer.gain_right[c]) * spatial.attenuation;
+            buffer.gain_left[c] = base * spatial.pan_left;
+            buffer.gain_right[c] = base * spatial.pan_right;
         }
-        return;
-    }
-    for (size_t k = 0; k < buffer.mix_bins.size(); ++k)
-    {
-        const MixBinPair& pair = buffer.mix_bins[k];
-        AddBin(buffer, static_cast<uint32_t>(k % channels), pair.bin, master * VolumeGain(pair.volume));
     }
 }
 
