@@ -5,10 +5,14 @@
 
 #include "dsound_internal.h"
 #include "rexbox/platform/audio.h"
+#include "rexbox/runtime/thread_activity.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <string>
+#include <system_error>
+#include <thread>
 
 namespace rexbox::hle::dsound
 {
@@ -161,7 +165,89 @@ void AddBin(Buffer& buffer, uint32_t channel, uint32_t bin, float gain)
     }
 }
 
-void MixBuffer(Buffer& buffer, float* samples, uint32_t frames)
+// A streamed loop buffer that stops being refilled replays its last stretch
+// for ever (design i043). Only buffers of this size or more are watched, and
+// only once their content has changed between laps (a static loop, such as an
+// engine sound, never does).
+constexpr uint32_t kStreamMinBytes = 16384;
+constexpr uint32_t kStreamMinChanges = 2;
+constexpr uint32_t kStalledLaps = 8;
+constexpr double kStalledSeconds = 2.0;
+
+uint64_t ContentHash(const Buffer& buffer)
+{
+    const uint8_t* bytes = Memory().Translate(buffer.data);
+    uint64_t hash = 1469598103934665603ull;  // FNV-1a
+    for (uint32_t i = 0; i < buffer.bytes; ++i)
+    {
+        hash = (hash ^ bytes[i]) * 1099511628211ull;
+    }
+    return hash;
+}
+
+// Whether every frame holds the first frame's bytes (a writer filling silence).
+bool ConstantContent(const Buffer& buffer)
+{
+    const uint8_t* bytes = Memory().Translate(buffer.data);
+    const uint32_t frame = std::max<uint32_t>(1, std::min<uint32_t>(BlockAlign(buffer), 16));
+    for (uint32_t i = frame; i + frame <= buffer.bytes; i += frame)
+    {
+        if (std::memcmp(bytes, bytes + i, frame) != 0)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Called when a looping buffer wraps: reports, once per stall, a streamed
+// buffer playing the same non-silent content for kStalledLaps laps and
+// kStalledSeconds, with the guest threads (from another thread, so the
+// audio callback does not wait); and the end of such a stall.
+void NoteLap(GuestAddress key, Buffer& buffer, uint32_t loop_frames, uint32_t rate)
+{
+    if (buffer.bytes < kStreamMinBytes || buffer.data == 0 || rate == 0)
+    {
+        return;
+    }
+    const uint64_t hash = ContentHash(buffer);
+    if (hash != buffer.lap_hash)
+    {
+        if (buffer.stall_reported)
+        {
+            std::fprintf(stderr, "[dsound] buffer %08X is written again after %u unchanged lap(s)\n", key,
+                         buffer.unchanged_laps);
+        }
+        buffer.lap_hash = hash;
+        ++buffer.lap_changes;
+        buffer.unchanged_laps = 0;
+        buffer.stall_reported = false;
+        return;
+    }
+    ++buffer.unchanged_laps;
+    const double lap_seconds = static_cast<double>(loop_frames) / rate;
+    if (buffer.stall_reported || buffer.lap_changes < kStreamMinChanges || buffer.unchanged_laps < kStalledLaps ||
+        buffer.unchanged_laps * lap_seconds < kStalledSeconds || ConstantContent(buffer))
+    {
+        return;
+    }
+    buffer.stall_reported = true;
+    char why[200];
+    std::snprintf(why, sizeof(why),
+                  "buffer %08X (%u bytes, %u Hz, %u ch) has replayed the same %.2f s for %u laps: its writer stopped",
+                  key, buffer.bytes, rate, buffer.format.channels, lap_seconds, buffer.unchanged_laps);
+    std::fprintf(stderr, "[dsound] %s\n", why);
+    try
+    {
+        std::thread([text = std::string(why)] { runtime::ReportGuestThreads("[dsound]", text.c_str()); }).detach();
+    }
+    catch (const std::system_error&)
+    {
+        // No thread for the report: the line above stands alone.
+    }
+}
+
+void MixBuffer(GuestAddress key, Buffer& buffer, float* samples, uint32_t frames)
 {
     if (!buffer.playing || !buffer.valid_format || buffer.data == 0)
     {
@@ -243,6 +329,10 @@ void MixBuffer(Buffer& buffer, float* samples, uint32_t frames)
             buffer.saved_bytes = 0;
             position = 0.0;
         }
+    }
+    if (buffer.playing && buffer.looping && position < buffer.position)
+    {
+        NoteLap(key, buffer, loop_end - loop_begin, rate);
     }
     buffer.position = position;
 }
@@ -339,7 +429,7 @@ void MixLocked(float* samples, uint32_t frames)
 {
     for (auto& entry : State().buffers)
     {
-        MixBuffer(entry.second, samples, frames);
+        MixBuffer(entry.first, entry.second, samples, frames);
     }
 }
 

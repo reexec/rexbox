@@ -1,5 +1,5 @@
 // What each guest thread is doing, for a report when presents stop
-// (docs/design/20261015-i060-stall-report.md).
+// (docs/design/20261015-i060-stall-report.md) or another module asks.
 //
 // HLE entry points note the call a thread last made, the kernel notes its
 // waits, and the display notes presents. A monitor thread watches the presents;
@@ -29,6 +29,12 @@ void NoteThreadName(std::string name, uint32_t guest_id);
 
 // The calling thread's name as given to NoteThreadName, or "a host thread".
 std::string CurrentThreadName();
+
+// Prints "<prefix> <why>; guest threads:", one line per guest thread as the
+// stall report does, and each guest thread's host stack where the platform
+// can (for other modules' one-time reports, such as a stalled audio stream).
+// Waits for each thread in turn: never from a thread that must not stall.
+void ReportGuestThreads(const char* prefix, const char* why);
 
 // The calling thread entered an HLE function. `name` must outlive the process
 // (a string literal or a registry entry); `esp` is the guest stack pointer

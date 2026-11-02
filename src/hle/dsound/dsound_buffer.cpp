@@ -214,6 +214,10 @@ void IDirectSoundBuffer_Play()
         buffer->saved_bytes = 0;
         buffer->position = static_cast<double>(std::min(FramesFromBytes(*buffer, start), TotalFrames(*buffer)));
         buffer->playing = true;
+        buffer->lap_hash = 0;
+        buffer->lap_changes = 0;
+        buffer->unchanged_laps = 0;
+        buffer->stall_reported = false;
     }
     else if ((flags & kPlayFromStart) != 0)
     {

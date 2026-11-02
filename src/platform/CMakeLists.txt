@@ -6,6 +6,7 @@ set(REXBOX_PLATFORM_SOURCES_win32
     win32/guarded_call_win32.cpp
     win32/host_thread_win32.cpp
     win32/sampler_win32.cpp
+    win32/stack_report_win32.cpp
     win32/system_info_win32.cpp
     win32/virtual_memory_win32.cpp
     sdl/audio_sdl.cpp
@@ -22,6 +23,7 @@ set(REXBOX_PLATFORM_SOURCES_linux
     linux/guarded_call_linux.cpp
     linux/host_thread_linux.cpp
     linux/sampler_linux.cpp
+    linux/stack_report_linux.cpp
     linux/system_info_linux.cpp
     linux/virtual_memory_linux.cpp
     sdl/audio_sdl.cpp
