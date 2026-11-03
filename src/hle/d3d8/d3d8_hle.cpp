@@ -34,6 +34,7 @@ void RegisterD3d8Hle(runtime::HleRegistry& registry)
     RegisterDrawExports(registry);
     RegisterPushExports(registry);
     RegisterDeviceExports(registry);
+    RegisterQueryExports(registry);
     RegisterLtcgExports(registry);  // after the public exports it re-frames
 }
 

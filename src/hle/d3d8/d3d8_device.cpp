@@ -22,6 +22,7 @@
 #include "rexbox/runtime/environment.h"
 #include "rexbox/runtime/thread_activity.h"
 
+#include <optional>
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -275,6 +276,7 @@ uint32_t CreateDevice(uint32_t adapter, uint32_t device_type, uint32_t behavior,
                  pp.multi_sample_type, pp.enable_auto_depth_stencil != 0 ? "on" : "off",
                  pp.auto_depth_stencil_format, pp.flags, pp.presentation_interval, behavior);
     state.present = pp;
+    state.behavior_flags = behavior;
     SetVerticalBlankRate(pp.refresh_rate);
 
     if (!DisplayDisabled())
@@ -289,12 +291,29 @@ uint32_t CreateDevice(uint32_t adapter, uint32_t device_type, uint32_t behavior,
         ApplyPictureAspect();  // 16:9 when the settings ask for widescreen
     }
 
-    const auto device = Heap().Allocate(kDeviceObjectSize, runtime::GuestHeap::kPageSize, false);
+    // An LTCG title's inlined code reaches the library's static device
+    // directly as well as through its pointer, so a title that binds
+    // "D3D_g_Device" gets that object (left as the image has it: the fields
+    // around it are other library globals). Otherwise a heap block (design
+    // i051).
+    const GuestAddress bound_device = runtime::Env().registry->FindVariable("D3D_g_Device");
+    std::optional<GuestAddress> device;
+    if (bound_device != 0)
+    {
+        device = bound_device;
+    }
+    else
+    {
+        device = Heap().Allocate(kDeviceObjectSize, runtime::GuestHeap::kPageSize, false);
+        if (device)
+        {
+            Memory().Fill(*device, 0, kDeviceObjectSize);
+        }
+    }
     if (!device || !CreateDeviceSurfaces(state))
     {
         return kD3dErrNotAvailable;
     }
-    Memory().Fill(*device, 0, kDeviceObjectSize);
     state.device = *device;
     // The library global the original sets; its own functions (and the
     // binding fences, d3d8_globals.h) read the device through it.

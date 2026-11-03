@@ -270,12 +270,11 @@ void D3DDevice_DeletePixelShader()
 }
 
 // HRESULT D3DDevice_SetVertexShaderConstant(INT Register, const void* pConstantData, DWORD ConstantCount)
-void D3DDevice_SetVertexShaderConstant()
+// Stores `count` constants from `data` at the title's register `reg`
+// (-96..95 in its constant mode).
+void WriteVertexConstants(uint32_t reg, GuestAddress data, uint32_t count)
 {
-    HleCall call;
-    const int32_t first = static_cast<int32_t>(call.Arg(0)) + kVertexConstantBase;
-    const GuestAddress data = call.Arg(1);
-    const uint32_t count = call.Arg(2);
+    const int32_t first = static_cast<int32_t>(reg) + kVertexConstantBase;
     for (uint32_t i = 0; i < count; ++i)
     {
         const int32_t index = first + static_cast<int32_t>(i);
@@ -285,6 +284,57 @@ void D3DDevice_SetVertexShaderConstant()
         }
     }
     ++g_vertex_constants_version;
+}
+
+void D3DDevice_SetVertexShaderConstant()
+{
+    HleCall call;
+    WriteVertexConstants(call.Arg(0), call.Arg(1), call.Arg(2));
+    call.Return(kD3dOk, 3);
+}
+
+// void __fastcall D3DDevice_SetVertexShaderConstantNotInline(INT Register = ecx,
+//     CONST void* pConstantData = edx, DWORD ConstantCount) (XDK 5849, ret 4;
+// issue #56).
+void D3DDevice_SetVertexShaderConstantNotInline()
+{
+    HleCall call;
+    WriteVertexConstants(call.Ecx(), call.Edx(), call.Arg(0));
+    call.Return(kD3dOk, 1);
+}
+
+// void __fastcall D3DDevice_SetVertexShaderConstant1(INT Register = ecx, CONST void* pConstantData = edx)
+// (XDK 5849): one constant (issue #56).
+void D3DDevice_SetVertexShaderConstant1()
+{
+    HleCall call;
+    WriteVertexConstants(call.Ecx(), call.Edx(), 1);
+    call.Return(kD3dOk, 0);
+}
+
+// void __fastcall D3DDevice_SetVertexShaderConstantNotInlineFast(INT Register = ecx,
+//     CONST void* pConstantData = edx, DWORD ConstantCount) (XDK 5849, ret 4)
+void D3DDevice_SetVertexShaderConstantNotInlineFast()
+{
+    HleCall call;
+    WriteVertexConstants(call.Ecx(), call.Edx(), call.Arg(0));
+    call.Return(kD3dOk, 1);
+}
+
+// void D3DDevice_GetVertexShaderConstant(INT Register, void* pConstantData, DWORD ConstantCount)
+void D3DDevice_GetVertexShaderConstant()
+{
+    HleCall call;
+    const int32_t first = static_cast<int32_t>(call.Arg(0)) + kVertexConstantBase;
+    const GuestAddress data = call.Arg(1);
+    for (uint32_t i = 0; data != 0 && i < call.Arg(2); ++i)
+    {
+        const int32_t index = first + static_cast<int32_t>(i);
+        if (index >= 0 && index < static_cast<int32_t>(kVertexConstantCount))
+        {
+            std::memcpy(Memory().Translate(data + i * 16), g_vertex_constants[index], 16);
+        }
+    }
     call.Return(kD3dOk, 3);
 }
 
@@ -386,6 +436,12 @@ void RegisterShaderExports(runtime::HleRegistry& registry)
     registry.AddExport("d3d8", "D3DDevice_CreatePixelShader", &D3DDevice_CreatePixelShader);
     registry.AddExport("d3d8", "D3DDevice_DeletePixelShader", &D3DDevice_DeletePixelShader);
     registry.AddExport("d3d8", "D3DDevice_SetVertexShaderConstant", &D3DDevice_SetVertexShaderConstant);
+    registry.AddExport("d3d8", "D3DDevice_SetVertexShaderConstantNotInline",
+                       &D3DDevice_SetVertexShaderConstantNotInline);
+    registry.AddExport("d3d8", "D3DDevice_GetVertexShaderConstant", &D3DDevice_GetVertexShaderConstant);
+    registry.AddExport("d3d8", "D3DDevice_SetVertexShaderConstant1", &D3DDevice_SetVertexShaderConstant1);
+    registry.AddExport("d3d8", "D3DDevice_SetVertexShaderConstantNotInlineFast",
+                       &D3DDevice_SetVertexShaderConstantNotInlineFast);
     registry.AddExport("d3d8", "D3DDevice_SetPixelShaderConstant", &D3DDevice_SetPixelShaderConstant);
 }
 
