@@ -3,7 +3,10 @@
 
 #include "kernel_internal.h"
 
+#include <algorithm>
 #include <array>
+#include <cstring>
+#include <utility>
 
 namespace rexbox::hle::kernel
 {
@@ -117,6 +120,157 @@ void Update(GuestAddress context, const uint8_t* data, uint32_t length)
     StoreState(context, state);
 }
 
+// SHA-1 over host bytes, for the functions that hash internally (XcHMAC).
+class HostSha1
+{
+public:
+    void Update(const uint8_t* data, uint32_t length)
+    {
+        for (uint32_t i = 0; i < length; ++i)
+        {
+            block_[used_++] = data[i];
+            if (used_ == 64)
+            {
+                Transform(state_, block_.data());
+                used_ = 0;
+            }
+        }
+        bytes_ += length;
+    }
+
+    std::array<uint8_t, 20> Final()
+    {
+        const uint64_t bits = bytes_ * 8;
+        const uint8_t pad = 0x80;
+        Update(&pad, 1);
+        const uint8_t zero = 0;
+        while (used_ != 56)
+        {
+            Update(&zero, 1);
+        }
+        for (int i = 0; i < 8; ++i)
+        {
+            const uint8_t byte = static_cast<uint8_t>(bits >> (56 - 8 * i));
+            Update(&byte, 1);
+        }
+        std::array<uint8_t, 20> digest{};
+        for (int i = 0; i < 5; ++i)
+        {
+            for (int j = 0; j < 4; ++j)
+            {
+                digest[i * 4 + j] = static_cast<uint8_t>(state_[i] >> (24 - 8 * j));
+            }
+        }
+        return digest;
+    }
+
+private:
+    std::array<uint32_t, 5> state_ = {0x67452301, 0xEFCDAB89, 0x98BADCFE, 0x10325476, 0xC3D2E1F0};
+    std::array<uint8_t, 64> block_{};
+    uint32_t used_ = 0;
+    uint64_t bytes_ = 0;
+};
+
+// VOID XcHMAC(PBYTE pbKeyMaterial, ULONG cbKeyMaterial, PBYTE pbData,
+//     ULONG cbData, PBYTE pbData2, ULONG cbData2, PBYTE HmacData)
+// HMAC-SHA1 (RFC 2104) of pbData followed by pbData2 (issue #52).
+void XcHMAC()
+{
+    HleCall call;
+    runtime::GuestMemory& memory = Memory();
+    std::array<uint8_t, 64> key{};
+    const uint32_t key_length = call.Arg(1);
+    if (key_length > key.size())
+    {
+        HostSha1 hash;
+        hash.Update(memory.Translate(call.Arg(0)), key_length);
+        const auto digest = hash.Final();
+        std::copy(digest.begin(), digest.end(), key.begin());
+    }
+    else if (key_length != 0)
+    {
+        std::memcpy(key.data(), memory.Translate(call.Arg(0)), key_length);
+    }
+    std::array<uint8_t, 64> pad{};
+    HostSha1 inner;
+    for (size_t i = 0; i < pad.size(); ++i)
+    {
+        pad[i] = key[i] ^ 0x36;
+    }
+    inner.Update(pad.data(), 64);
+    if (call.Arg(3) != 0)
+    {
+        inner.Update(memory.Translate(call.Arg(2)), call.Arg(3));
+    }
+    if (call.Arg(5) != 0)
+    {
+        inner.Update(memory.Translate(call.Arg(4)), call.Arg(5));
+    }
+    const auto inner_digest = inner.Final();
+    HostSha1 outer;
+    for (size_t i = 0; i < pad.size(); ++i)
+    {
+        pad[i] = key[i] ^ 0x5C;
+    }
+    outer.Update(pad.data(), 64);
+    outer.Update(inner_digest.data(), static_cast<uint32_t>(inner_digest.size()));
+    const auto digest = outer.Final();
+    std::memcpy(memory.Translate(call.Arg(6)), digest.data(), digest.size());
+    call.Return(0, 7);
+}
+
+// RC4. The key structure is the title's buffer, which only these two
+// functions read: S[256] then i and j (258 bytes; the kernel's own layout is
+// not known, and the title never looks inside, **inferred**; issue #52).
+constexpr uint32_t kRc4I = 256;
+constexpr uint32_t kRc4J = 257;
+
+// VOID XcRC4Key(PUCHAR pbKeyStruct, ULONG dwKeyLength, PUCHAR pbKey)
+void XcRC4Key()
+{
+    HleCall call;
+    runtime::GuestMemory& memory = Memory();
+    uint8_t* const state = memory.Translate(call.Arg(0));
+    const uint32_t length = call.Arg(1);
+    const uint8_t* const key = memory.Translate(call.Arg(2));
+    for (uint32_t i = 0; i < 256; ++i)
+    {
+        state[i] = static_cast<uint8_t>(i);
+    }
+    uint8_t j = 0;
+    for (uint32_t i = 0; length != 0 && i < 256; ++i)
+    {
+        j = static_cast<uint8_t>(j + state[i] + key[i % length]);
+        std::swap(state[i], state[j]);
+    }
+    state[kRc4I] = 0;
+    state[kRc4J] = 0;
+    call.Return(0, 3);
+}
+
+// VOID XcRC4Crypt(PUCHAR pbKeyStruct, ULONG dwInputLength, PUCHAR pbInput):
+// encrypts or decrypts in place, continuing the key stream.
+void XcRC4Crypt()
+{
+    HleCall call;
+    runtime::GuestMemory& memory = Memory();
+    uint8_t* const state = memory.Translate(call.Arg(0));
+    const uint32_t length = call.Arg(1);
+    uint8_t* const data = length != 0 ? memory.Translate(call.Arg(2)) : nullptr;
+    uint8_t i = state[kRc4I];
+    uint8_t j = state[kRc4J];
+    for (uint32_t n = 0; n < length; ++n)
+    {
+        i = static_cast<uint8_t>(i + 1);
+        j = static_cast<uint8_t>(j + state[i]);
+        std::swap(state[i], state[j]);
+        data[n] ^= state[static_cast<uint8_t>(state[i] + state[j])];
+    }
+    state[kRc4I] = i;
+    state[kRc4J] = j;
+    call.Return(0, 3);
+}
+
 // VOID XcSHAInit(PUCHAR pbSHAContext)
 void XcSHAInit()
 {
@@ -178,6 +332,9 @@ void RegisterCryptoExports(runtime::HleRegistry& registry)
     registry.AddExport("kernel", "XcSHAInit", &XcSHAInit);
     registry.AddExport("kernel", "XcSHAUpdate", &XcSHAUpdate);
     registry.AddExport("kernel", "XcSHAFinal", &XcSHAFinal);
+    registry.AddExport("kernel", "XcHMAC", &XcHMAC);
+    registry.AddExport("kernel", "XcRC4Key", &XcRC4Key);
+    registry.AddExport("kernel", "XcRC4Crypt", &XcRC4Crypt);
 }
 
 }  // namespace rexbox::hle::kernel

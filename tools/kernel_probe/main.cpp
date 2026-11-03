@@ -22,6 +22,7 @@
 #include <initializer_list>
 #include <iterator>
 #include <string>
+#include <thread>
 
 namespace
 {
@@ -216,6 +217,31 @@ void ProbeSha1()
     static const uint8_t kExpected[20] = {0xA9, 0x99, 0x3E, 0x36, 0x47, 0x06, 0x81, 0x6A, 0xBA, 0x3E,
                                           0x25, 0x71, 0x78, 0x50, 0xC2, 0x6C, 0x9C, 0xD0, 0xD8, 0x9D};
     Check(std::memcmp(g_memory->Translate(digest), kExpected, 20) == 0, "SHA-1(\"abc\") (FIPS 180-4 vector)");
+
+    // XcHMAC (issue #52): RFC 2202 test case 2, the data split over both inputs.
+    const GuestAddress key = kScratch + 0x360;
+    const GuestAddress mac = kScratch + 0x380;
+    std::memcpy(g_memory->Translate(key), "Jefe", 4);
+    std::memcpy(g_memory->Translate(input), "what do ya want for nothing?", 28);
+    Call("XcHMAC", {key, 4, input, 10, input + 10, 18, mac});
+    static const uint8_t kHmac[20] = {0xEF, 0xFC, 0xDF, 0x6A, 0xE5, 0xEB, 0x2F, 0xA2, 0xD2, 0x74,
+                                      0x16, 0xD5, 0xF1, 0x84, 0xDF, 0x9C, 0x25, 0x9A, 0x7C, 0x79};
+    Check(std::memcmp(g_memory->Translate(mac), kHmac, 20) == 0, "XcHMAC (RFC 2202 test case 2)");
+
+    // XcRC4Key/XcRC4Crypt (issue #52): RFC 6229, the 40-bit key 0102030405,
+    // key stream offset 0, in two calls to check the state carries over.
+    const GuestAddress rc4 = kScratch + 0x600;
+    const GuestAddress rc4_key = kScratch + 0x710;
+    const GuestAddress rc4_data = kScratch + 0x720;
+    static const uint8_t kRc4Key[5] = {1, 2, 3, 4, 5};
+    std::memcpy(g_memory->Translate(rc4_key), kRc4Key, 5);
+    std::memset(g_memory->Translate(rc4_data), 0, 16);
+    Call("XcRC4Key", {rc4, 5, rc4_key});
+    Call("XcRC4Crypt", {rc4, 6, rc4_data});
+    Call("XcRC4Crypt", {rc4, 10, rc4_data + 6});
+    static const uint8_t kStream[16] = {0xB2, 0x39, 0x63, 0x05, 0xF0, 0x3D, 0xC0, 0x27,
+                                        0xCC, 0xC3, 0x52, 0x4A, 0x0A, 0x11, 0x18, 0xA8};
+    Check(std::memcmp(g_memory->Translate(rc4_data), kStream, 16) == 0, "XcRC4Crypt key stream (RFC 6229)");
 }
 
 void ProbeTime()
@@ -233,10 +259,29 @@ void ProbeTime()
     Check(out[0] == 2001 && out[1] == 11 && out[2] == 15 && out[3] == 12 && out[4] == 34 && out[5] == 56 &&
               out[6] == 789 && out[7] == 4,
           "time fields round-trip, weekday Thursday");
+
+    // The performance counter (issue #52): 3.375 MHz, advancing with time.
+    rexbox::runtime::GuestCpu& cpu = g_executor->Cpu();
+    const uint32_t frequency = Call("KeQueryPerformanceFrequency", {});
+    Check(frequency == 3375000 && cpu.Get(Gpr::kEdx) == 0, "KeQueryPerformanceFrequency is 3.375 MHz");
+    const uint32_t low = Call("KeQueryPerformanceCounter", {});
+    const uint64_t before = (static_cast<uint64_t>(cpu.Get(Gpr::kEdx)) << 32) | low;
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    const uint32_t low_after = Call("KeQueryPerformanceCounter", {});
+    const uint64_t after = (static_cast<uint64_t>(cpu.Get(Gpr::kEdx)) << 32) | low_after;
+    Check(after - before >= 3375000 / 100 && after - before < 3375000, "the counter advances about 3375 ticks per ms");
 }
 
 void ProbeMemory()
 {
+    // MmQueryStatistics (issue #52): 64 MiB of pages, the length checked.
+    const GuestAddress stats = kScratch + 0x580;
+    g_memory->Write32(stats, 0x24);
+    Check(Call("MmQueryStatistics", {stats}) == 0 && g_memory->Read32(stats + 4) == 16384 &&
+              g_memory->Read32(stats + 8) != 0 && g_memory->Read32(stats + 8) <= 16384,
+          "MmQueryStatistics: 16384 total pages, some available");
+    g_memory->Write32(stats, 0x20);
+    Check(Call("MmQueryStatistics", {stats}) == 0xC000000D, "MmQueryStatistics rejects a wrong Length");
     const GuestAddress base_io = kScratch + 0x500;
     const GuestAddress size_io = kScratch + 0x504;
     g_memory->Write32(base_io, 0);
