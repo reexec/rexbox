@@ -39,4 +39,11 @@ void RenderDsoundFrames(float* samples, uint32_t frames);
 
 }  // namespace rexbox::hle::dsound
 
+// The APU's global sample counter (NV_PAPU XGSCNT at 0xFE80200C on the
+// console, 48 kHz, inferred): samples at kOutputRate since the module started,
+// wrapping at 32 bits (issue #55). rexbox maps no MMIO, so a title whose
+// lifted code reads the register directly reads this through an adapter. C
+// linkage so decompiled title code (C) can declare it without this header.
+extern "C" uint32_t rexbox_dsound_apu_sample_count(void);
+
 #endif  // REXBOX_HLE_DSOUND_DSOUND_HLE_H
