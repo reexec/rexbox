@@ -584,6 +584,29 @@ uint32_t SetTimerEx(GuestAddress timer, int64_t due, uint32_t period_ms)
     return Call("KeSetTimerEx", {timer, Low(due), High(due), period_ms, 0});
 }
 
+// XeImageFileName: an ANSI_STRING naming the running image on the DVD device
+// (issue #49; the probe initializes the kernel with the default file name).
+void ProbeImageFileName()
+{
+    const GuestAddress string = rexbox::hle::kernel::DataExportAddress("XeImageFileName");
+    Check(string != 0, "XeImageFileName is a data export");
+    if (string == 0)
+    {
+        return;
+    }
+    const std::string expected = "\\Device\\CdRom0\\default.xbe";
+    const uint16_t length = g_memory->Read16(string);
+    const uint16_t maximum = g_memory->Read16(string + 2);
+    const GuestAddress buffer = g_memory->Read32(string + 4);
+    Check(length == expected.size() && maximum == expected.size() + 1, "XeImageFileName lengths exclude, include the NUL");
+    std::string text;
+    for (uint32_t i = 0; buffer != 0 && i < length; ++i)
+    {
+        text += static_cast<char>(g_memory->Read8(buffer + i));
+    }
+    Check(text == expected && g_memory->Read8(buffer + length) == 0, "XeImageFileName is \\Device\\CdRom0\\default.xbe");
+}
+
 uint32_t WaitTimer(GuestAddress timer, int64_t ms)
 {
     return Call("KeWaitForSingleObject", {timer, 0, 0, 0, Timeout(kScratch + 0x10, ms)});
@@ -685,6 +708,7 @@ int main()
     ProbeRename(scratch / "hdd");
     ProbeGuestWindow();
     ProbeTimers();
+    ProbeImageFileName();
 
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);
     std::fflush(stdout);

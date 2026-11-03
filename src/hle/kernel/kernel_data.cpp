@@ -6,6 +6,8 @@
 
 #include "kernel_internal.h"
 
+#include "rexbox/hle/kernel/kernel_hle.h"
+
 #include <atomic>
 #include <thread>
 
@@ -56,6 +58,9 @@ constexpr DataExport kDataExports[] = {
     {"XboxEEPROMKey", 16},
     {"HalBootSMCVideoMode", 4},
     {"IdexChannelObject", 0x40},
+    // ANSI_STRING {USHORT Length, MaximumLength; PCHAR Buffer}: the running
+    // image's path (SetImageFileName).
+    {"XeImageFileName", 8},
 };
 
 std::atomic<bool> g_ticker_running{false};
@@ -129,6 +134,31 @@ void InitializeKernelData()
     {
         std::thread(&TickerMain).detach();
     }
+}
+
+void SetImageFileName(const std::string& file_name)
+{
+    // The XBE's path on the DVD device, as the console's kernel names the
+    // image it launched; XAPI compares it with the \??\D: link's target.
+    const std::string path = "\\Device\\CdRom0\\" + file_name;
+    const auto length = static_cast<uint32_t>(path.size());
+    const GuestAddress buffer = AllocateZeroed(length + 1, 16);
+    runtime::GuestMemory& memory = Memory();
+    for (uint32_t i = 0; i < length; ++i)
+    {
+        memory.Write8(buffer + i, static_cast<uint8_t>(path[i]));
+    }
+    const GuestAddress string = State().data_exports["XeImageFileName"];
+    memory.Write16(string + 0, static_cast<uint16_t>(length));
+    memory.Write16(string + 2, static_cast<uint16_t>(length + 1));
+    memory.Write32(string + 4, buffer);
+}
+
+uint32_t DataExportAddress(const char* name)
+{
+    const auto& exports = State().data_exports;
+    const auto it = exports.find(name);
+    return it != exports.end() ? it->second : 0;
 }
 
 void RegisterDataExports(runtime::HleRegistry& /*registry*/)
