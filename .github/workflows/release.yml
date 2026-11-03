@@ -92,6 +92,15 @@ jobs:
             for p in libasound2-dev libpulse-dev libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libdrm-dev libgbm-dev libgl-dev libegl-dev; do
               i386="$i386 $p:i386"
             done
+            # glib 2.80.0-6ubuntu3.10's development files (pulled in through
+            # libpulse-dev) depend on "python3 | qemu-user | qemu-user-static"
+            # and on libglib2.0-dev-bin-linux, which the amd64 libglib2.0-dev-bin
+            # (Multi-Arch: foreign) provides. For an i386 package that python3
+            # means python3:i386, which cannot sit beside the runner's amd64
+            # Python; given the whole list at once apt tries it and gives up
+            # ("held broken packages"). The amd64 packages installed first
+            # satisfy both (issue #46).
+            sudo apt-get install -y libglib2.0-dev-bin qemu-user
             sudo apt-get install -y gcc-multilib g++-multilib ninja-build $i386
           else
             sudo apt-get install -y $packages

@@ -12,6 +12,8 @@ sudo apt-get install -y build-essential cmake ninja-build git \
   libxfixes-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libdrm-dev libgbm-dev libgl-dev libegl-dev
 # x86 (-m32) 빌드라면 추가로:
 sudo dpkg --add-architecture i386 && sudo apt-get update
+# libpulse-dev:i386을 넣는다면 먼저(glib 2.80.0-6ubuntu3.10, issue #46):
+sudo apt-get install -y libglib2.0-dev-bin qemu-user
 sudo apt-get install -y gcc-multilib g++-multilib libasound2-dev:i386 libx11-dev:i386 libxext-dev:i386 libgl-dev:i386  # (CI의 목록은 .github/workflows/ci.yml)
 ```
 
@@ -47,7 +49,7 @@ Based on: [design i004](../design/20261020-i004-linux-preparation.md), [work log
 
 A Linux standalone build yields the libraries, the tools and the four probes, as on Win32 (running a game is a title project's business); verified on Ubuntu 24.04 (WSL2 included).
 
-1. **Requirements**: the packages in the first block above (build tools, CMake, Ninja, and the development libraries SDL3 compiles against); for an x86 (`-m32`) build also `gcc-multilib`, `g++-multilib` and the `:i386` development packages after `dpkg --add-architecture i386` (the CI's list is in `.github/workflows/ci.yml`).
+1. **Requirements**: the packages in the first block above (build tools, CMake, Ninja, and the development libraries SDL3 compiles against); for an x86 (`-m32`) build also `gcc-multilib`, `g++-multilib` and the `:i386` development packages after `dpkg --add-architecture i386` (the CI's list is in `.github/workflows/ci.yml`). With `libpulse-dev:i386` in the list, install the amd64 `libglib2.0-dev-bin` and `qemu-user` first: glib 2.80.0-6ubuntu3.10's development files depend on `python3 | qemu-user | qemu-user-static`, which for an i386 package means `python3:i386`, and apt gives up with "held broken packages" (issue #46).
 2. **Get the repository**: `git clone --recurse-submodules https://github.com/reexec/rexbox.git`.
 3. **Build and test**: `scripts/build_linux.sh <x64|x86> <debug|release>` configures, builds and runs `ctest` through the presets in `CMakePresets.json` (`linux-<arch>-<config>`); output goes to `build/linux-<arch>-<config>/`. x86 builds run with `-msse2 -mfpmath=sse` from `rexbox_apply_host_flags()`, so no x87 excess precision (design i004 §3).
 4. **Not there yet**: the sampling profiler (`REXBOX_SAMPLE`) is refused on Linux; Linux has no written-page records: `TakeWrittenPages` always reports failure and D3D8 compares whole buffers (same correctness); the kernel's soft-dirty bits clear only for the whole process, which is slow and loses records, so they are not used ([design i036](../design/20261027-i036-linux-write-tracking.md)).
