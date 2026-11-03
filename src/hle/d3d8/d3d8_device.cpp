@@ -9,6 +9,7 @@
 #include "d3d8_globals.h"
 #include "d3d8_render_state.h"
 #include "d3d8_gl_buffers.h"
+#include "d3d8_push.h"
 #include "d3d8_internal.h"
 #include "d3d8_profile.h"
 #include "d3d8_shader.h"
@@ -298,6 +299,8 @@ uint32_t CreateDevice(uint32_t adapter, uint32_t device_type, uint32_t behavior,
     // The library global the original sets; its own functions (and the
     // binding fences, d3d8_globals.h) read the device through it.
     SetDeviceObject(state.device);
+    // LTCG titles write methods into it themselves (design i051).
+    SetupDevicePushBuffer(state.device);
     if (state.display_created)
     {
         BindRenderTarget(state.render_target, state.depth_target);
@@ -460,6 +463,7 @@ void D3DDevice_SetViewport()
 void D3DDevice_Clear()
 {
     HleCall call;
+    FlushDevicePushBuffer();  // what the title pushed comes first (design i051)
     const uint32_t count = call.Arg(0);
     const GuestAddress rects = call.Arg(1);
     const uint32_t flags = call.Arg(2);
@@ -584,6 +588,7 @@ void D3DDevice_Swap()
 {
     profile::Lap lap;
     HleCall call;
+    FlushDevicePushBuffer();  // what the title pushed comes first (design i051)
     D3dState& state = State();
     ++state.frame_count;
     bool presented = false;
