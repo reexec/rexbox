@@ -226,6 +226,19 @@ void CaptureDraw(const char* name, uint32_t primitive, uint32_t count, GuestAddr
         const std::array<float, 16>& m = pipeline.transforms[ts::kProjection];
         line += Format(" | proj %g %g %g %g / %g %g %g %g / %g %g %g %g / %g %g %g %g", m[0], m[1], m[2], m[3], m[4],
                        m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15]);
+        // The world and view transforms too, so a quad drawn outside the clip
+        // volume shows why (issue #58).
+        for (const auto& [label, index] : {std::pair{"view", ts::kView}, std::pair{"world", ts::kWorld}})
+        {
+            const std::array<float, 16>& t = pipeline.transforms[index];
+            line += Format(" | %s %g %g %g %g / %g %g %g %g / %g %g %g %g / %g %g %g %g", label, t[0], t[1], t[2], t[3],
+                           t[4], t[5], t[6], t[7], t[8], t[9], t[10], t[11], t[12], t[13], t[14], t[15]);
+        }
+        if (pipeline.model_view_set || pipeline.composite_set)
+        {
+            line += Format(" | model view %s, composite %s", pipeline.model_view_set ? "set" : "-",
+                           pipeline.composite_set ? "set" : "-");
+        }
     }
     if ((pipeline.vertex_shader & fvf::kProgramHandle) != 0)
     {

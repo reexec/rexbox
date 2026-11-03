@@ -43,6 +43,10 @@ constexpr uint32_t kLinA4R4G4B4 = 0x1D;
 constexpr uint32_t kLinX8R8G8B8 = 0x1E;
 constexpr uint32_t kLinA8 = 0x1F;
 constexpr uint32_t kLinA8L8 = 0x20;
+// Video formats, linear, 16 bits per pixel in pairs (Y0 U Y1 V / U Y0 V Y1;
+// XDK D3DFMT_YUY2 and D3DFMT_UYVY, inferred; issue #58).
+constexpr uint32_t kYuy2 = 0x24;
+constexpr uint32_t kUyvy = 0x25;
 constexpr uint32_t kA8B8G8R8 = 0x3A;
 constexpr uint32_t kB8G8R8A8 = 0x3B;
 constexpr uint32_t kR8G8B8A8 = 0x3C;
