@@ -3,7 +3,9 @@
 // answers come from the HLE's own state, since the HLE device object holds
 // none of the library's fields.
 
+#include "d3d8_globals.h"
 #include "d3d8_internal.h"
+#include "d3d8_render_state.h"
 #include "d3d8_resource.h"
 #include "d3d8_state.h"
 #include "d3d8_vblank.h"
@@ -199,6 +201,15 @@ void D3D_UpdateProjectionViewportTransform()
     call.Return(call.Eax(), 0);
 }
 
+// void D3DDevice_SetRenderState_SampleAlpha(DWORD Value): XDK 5849's complex
+// state, stored in its slot (issue #60; alpha to coverage is not rendered).
+void D3DDevice_SetRenderState_SampleAlpha()
+{
+    HleCall call;
+    SetRenderStateValue(rs::kSampleAlpha, call.Arg(0));
+    call.Return(kD3dOk, 1);
+}
+
 }  // namespace
 
 void RegisterQueryExports(runtime::HleRegistry& registry)
@@ -216,10 +227,9 @@ void RegisterQueryExports(runtime::HleRegistry& registry)
     registry.AddExport("d3d8", "D3DDevice_PersistDisplay", &D3DDevice_PersistDisplay);
     registry.AddExport("d3d8", "D3D_DestroyResource_0__LTCG_edi1", &D3D_DestroyResource_0__LTCG_edi1);
     registry.AddExport("d3d8", "D3D_UpdateProjectionViewportTransform", &D3D_UpdateProjectionViewportTransform);
-    // Accepted only: the overlay (a video plane the HLE does not composite)
-    // and D3DRS_SAMPLEALPHA (alpha to coverage, not rendered).
+    // Accepted only: the overlay (a video plane the HLE does not composite).
     registry.AddExport("d3d8", "D3DDevice_EnableOverlay", &AcceptOne);
-    registry.AddExport("d3d8", "D3DDevice_SetRenderState_SampleAlpha", &AcceptOne);
+    registry.AddExport("d3d8", "D3DDevice_SetRenderState_SampleAlpha", &D3DDevice_SetRenderState_SampleAlpha);
 }
 
 }  // namespace rexbox::hle::d3d8

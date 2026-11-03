@@ -83,6 +83,10 @@ void Apply(const Snapshot& snapshot)
     pipeline = snapshot.pipeline;
     pipeline.texture_generation = generation + 1;
     State().viewport = snapshot.viewport;  // applied per draw (d3d8_draw)
+    for (uint32_t state = 0; state < kDeviceTransforms; ++state)
+    {
+        StoreTransformToDevice(state);
+    }
 }
 
 // HRESULT D3DDevice_CreateStateBlock(D3DSTATEBLOCKTYPE Type, DWORD* pToken):

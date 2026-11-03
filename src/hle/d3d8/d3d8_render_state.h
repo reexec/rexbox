@@ -103,6 +103,9 @@ constexpr uint32_t kStencilCullEnable = 142;
 constexpr uint32_t kRopZCmpAlwaysRead = 143;
 constexpr uint32_t kRopZRead = 144;
 constexpr uint32_t kDoNotCullUncompressed = 145;
+// XDK 5849's complex state between LineWidth and Dxt1NoiseEnable (4134 and
+// 4531 lack it; issue #60). Its logical ID follows 4134's states.
+constexpr uint32_t kSampleAlpha = 146;
 }  // namespace rs
 
 // D3D__TextureState slots, per stage (inferred order; kTexCoordIndex 28,
@@ -143,22 +146,34 @@ constexpr uint32_t kColorKeyColor = 30;
 // Where a title's library keeps the render-state blocks, as D3D__RenderState
 // slots. The simple block always starts at slot 0 with 4134's order; slots
 // between 4134's deferred start (82) and the title's are states 4134 lacks.
+//
+// Later XDKs grow each block at its end: XDK 5849 has 92 simple states (4531's
+// slot 82 and nine more), 44 deferred (4134's 35, then PresentationInterval
+// and eight unused) and 30 complex, its one new state (SampleAlpha) inserted
+// at the slot the title's D3DRS_SampleAlpha variable names (issue #60).
+constexpr uint32_t kNoRenderState = 0xFFFFFFFFu;
+constexpr uint32_t kLogicalDeferredFirst = 82;
+constexpr uint32_t kLogicalComplexFirst = 117;
+constexpr uint32_t kDeferredStateCount = 35;  // 4134's
+constexpr uint32_t kComplexStateCount = 29;   // 4134's and 4531's
+// Logical IDs: 4134's states, then the ones later XDKs added (kSampleAlpha).
+constexpr uint32_t kLogicalStateCount = kLogicalComplexFirst + kComplexStateCount + 1;
+
 struct RenderStateLayout
 {
     uint32_t deferred_first = 82;
     uint32_t complex_first = 117;
+    uint32_t complex_count = kComplexStateCount;
+    // The complex block's index of SampleAlpha, or kNoRenderState (4134, 4531).
+    uint32_t sample_alpha_index = kNoRenderState;
 };
 
-constexpr uint32_t kLogicalDeferredFirst = 82;
-constexpr uint32_t kLogicalComplexFirst = 117;
-constexpr uint32_t kComplexStateCount = 29;  // 4134 and 4531
-constexpr uint32_t kLogicalStateCount = kLogicalComplexFirst + kComplexStateCount;
-constexpr uint32_t kNoRenderState = 0xFFFFFFFFu;
-
-// The layout from the addresses of D3D_g_RenderState, D3D_g_DeferredRenderState
-// and D3D_g_ComplexRenderState; 4134's when the block addresses are missing or
-// inconsistent.
-RenderStateLayout DeriveRenderStateLayout(uint32_t render_state, uint32_t deferred, uint32_t complex);
+// The layout from the addresses of D3D_g_RenderState, D3D_g_DeferredRenderState,
+// D3D_g_ComplexRenderState and D3DRS_SampleAlpha (0 when the title has none);
+// 4134's when the block addresses are missing or inconsistent (a deferred
+// block smaller than 4134's).
+RenderStateLayout DeriveRenderStateLayout(uint32_t render_state, uint32_t deferred, uint32_t complex,
+                                          uint32_t sample_alpha = 0);
 // Slots the layout covers.
 uint32_t RenderStateSlotCount(const RenderStateLayout& layout);
 // A logical ID's slot, or kNoRenderState.

@@ -20,6 +20,8 @@ constexpr const char* kRenderStateVariable = "D3D_g_RenderState";
 constexpr const char* kTextureStateVariable = "D3D_g_DeferredTextureState";
 constexpr const char* kDeferredRenderStateVariable = "D3D_g_DeferredRenderState";
 constexpr const char* kComplexRenderStateVariable = "D3D_g_ComplexRenderState";
+// XDK 5849's inserted complex state (issue #60).
+constexpr const char* kSampleAlphaVariable = "D3DRS_SampleAlpha";
 
 struct Addresses
 {
@@ -53,7 +55,8 @@ const Addresses& Resolve()
             found.texture_state = registry->FindVariable(kTextureStateVariable);
             found.layout = DeriveRenderStateLayout(found.render_state,
                                                    registry->FindVariable(kDeferredRenderStateVariable),
-                                                   registry->FindVariable(kComplexRenderStateVariable));
+                                                   registry->FindVariable(kComplexRenderStateVariable),
+                                                   registry->FindVariable(kSampleAlphaVariable));
             // The profile binds every identified variable at once, so a bound
             // render state means binding is over; a variable the title's
             // library build does not identify (XDK 4531 has no D3D_g_Stream)

@@ -1123,6 +1123,8 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
                         pipeline.screen_space_offset_x, pipeline.screen_space_offset_y);
         uniforms->Set1f(program->wide, wide);
         // SetModelView's matrices replace world x view and the projection.
+        // An inlined SetTransform wrote the device's array directly.
+        SyncTransformsFromDevice();
         const std::array<float, 16> world_view =
             pipeline.model_view_set ? pipeline.model_view
                                     : Multiply(pipeline.transforms[ts::kWorld], pipeline.transforms[ts::kView]);

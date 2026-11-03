@@ -1,3 +1,4 @@
+#include "rexbox/runtime/environment.h"
 #include "d3d8_state.h"
 
 #include "d3d8_globals.h"
@@ -183,6 +184,18 @@ void D3DDevice_SetTexture()
 }
 
 // void D3DDevice_SetTransform(D3DTRANSFORMSTATETYPE State, const D3DMATRIX* pMatrix)
+// The device's transform array in guest memory, or 0 when the title binds
+// no offset for it.
+GuestAddress DeviceTransformArray()
+{
+    static const uint32_t offset = [] {
+        runtime::HleRegistry* registry = runtime::Env().registry;
+        return registry != nullptr ? registry->FindVariable("D3DDevice__m_Transform_OFFSET") : 0u;
+    }();
+    const GuestAddress device = State().device;
+    return offset != 0 && device != 0 ? device + offset : 0;
+}
+
 void D3DDevice_SetTransform()
 {
     HleCall call;
@@ -191,6 +204,21 @@ void D3DDevice_SetTransform()
     if (state < kMaxTransforms && matrix != 0)
     {
         std::memcpy(g_pipeline.transforms[state].data(), Memory().Translate(matrix), 64);
+        StoreTransformToDevice(state);
+        // REXBOX_D3D8_TRACE: the first transforms set, with the diagonal and
+        // the translation row (issue #60).
+        static uint32_t traced = 0;
+        if (D3d8TraceEnabled() && traced < 64)
+        {
+            ++traced;
+            const std::array<float, 16>& t = g_pipeline.transforms[state];
+            std::fprintf(stderr, "[d3d8] SetTransform %u: diag %g %g %g %g, row 3 %g %g %g %g\n", state, t[0], t[5],
+                         t[10], t[15], t[12], t[13], t[14], t[15]);
+        }
+    }
+    else if (D3d8TraceEnabled())
+    {
+        std::fprintf(stderr, "[d3d8] SetTransform state %u (matrix %08X) ignored\n", state, matrix);
     }
     call.Return(kD3dOk, 2);
 }
@@ -557,6 +585,29 @@ void AcceptThree()
 PipelineState& Pipeline()
 {
     return g_pipeline;
+}
+
+void SyncTransformsFromDevice()
+{
+    const GuestAddress array = DeviceTransformArray();
+    if (array == 0)
+    {
+        return;
+    }
+    const uint8_t* source = Memory().Translate(array);
+    for (uint32_t state = 0; state < kDeviceTransforms; ++state)
+    {
+        std::memcpy(g_pipeline.transforms[state].data(), source + state * 64, 64);
+    }
+}
+
+void StoreTransformToDevice(uint32_t state)
+{
+    const GuestAddress array = DeviceTransformArray();
+    if (array != 0 && state < kDeviceTransforms)
+    {
+        std::memcpy(Memory().Translate(array + state * 64), g_pipeline.transforms[state].data(), 64);
+    }
 }
 
 std::array<float, 16> ScreenToClip(const std::array<float, 16>& screen)
