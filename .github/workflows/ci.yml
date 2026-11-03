@@ -89,6 +89,11 @@ jobs:
             # the amd64 ones, and gives up; installing the amd64 package first
             # lets the i386 libraries use it (issue #46).
             sudo apt-get install -y libglib2.0-dev-bin
+            ls -la /etc/apt/preferences.d /etc/apt/apt.conf.d || true
+            cat /etc/apt/preferences.d/* 2>/dev/null || true
+            apt-mark showhold || true
+            apt-cache policy libglib2.0-dev-bin:i386 libglib2.0-dev:i386 libglib2.0-0t64:i386 || true
+            apt-get install -s -o Debug::pkgProblemResolver=yes libglib2.0-dev:i386 2>&1 | tail -60 || true
             sudo apt-get install -y gcc-multilib g++-multilib ninja-build $i386
           else
             sudo apt-get install -y $packages
