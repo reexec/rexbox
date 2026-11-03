@@ -288,10 +288,17 @@ bool ReadFormat(GuestAddress address, WaveFormat* format);
 // Mixes `frames` stereo frames into `samples` (added) and advances cursors.
 void MixLocked(float* samples, uint32_t frames);
 
+// Streams (dsound_stream.cpp, design i054). The mixer calls MixStreamsLocked
+// with the mutex held; DeliverStreamCompletions runs on a guest thread
+// without it (DirectSoundDoWork), completing the packets the mixer finished.
+void MixStreamsLocked(float* samples, uint32_t frames);
+void DeliverStreamCompletions();
+
 void RegisterDeviceExports(runtime::HleRegistry& registry);
 void RegisterBufferExports(runtime::HleRegistry& registry);
 void RegisterEffectsExports(runtime::HleRegistry& registry);
 void Register3dExports(runtime::HleRegistry& registry);
+void RegisterStreamExports(runtime::HleRegistry& registry);
 
 // Accepts a setting the HLE records nothing for and does not render
 // (envelopes, filters, HRTF, I3DL2: design section 7, design i040 section 3).

@@ -244,8 +244,7 @@ void RegisterDeviceExports(runtime::HleRegistry& registry)
     registry.AddExport("dsound", "IDirectSound_CreateSoundBuffer", &IDirectSound_CreateSoundBuffer);
     registry.AddExport("dsound", "CDirectSound_CreateSoundBuffer", &IDirectSound_CreateSoundBuffer);
     registry.AddExport("dsound", "DirectSoundCreateBuffer", &DirectSoundCreateBuffer);
-    // The library's periodic work: nothing to do.
-    registry.AddExport("dsound", "DirectSoundDoWork", &AcceptSetting<0>);
+    // DirectSoundDoWork completes stream packets (dsound_stream.cpp).
     // Listener settings not rendered (design section 7; the rendered ones are
     // in dsound_3d.cpp).
     registry.AddExport("dsound", "IDirectSound_SetAllParameters", &AcceptSetting<3>);

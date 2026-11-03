@@ -65,6 +65,7 @@ add_library(rexbox_hle_dsound STATIC
     hle/dsound/dsound_effects.cpp
     hle/dsound/dsound_hle.cpp
     hle/dsound/dsound_mixer.cpp
+    hle/dsound/dsound_stream.cpp
 )
 target_link_libraries(rexbox_hle_dsound PUBLIC rexbox_runtime)
 
