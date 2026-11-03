@@ -4,7 +4,9 @@
 #include "d3d8_trace.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace rexbox::hle::d3d8
@@ -46,6 +48,27 @@ struct PushState
 };
 
 PushState g_push;
+
+// The device push buffer (design i051). The device object's fields are the
+// title's view; `flushed` is how far the HLE has interpreted.
+constexpr uint32_t kDevicePushBytes = 0x80000;     // the library's default size
+constexpr uint32_t kDevicePushMargin = 0x4000;     // room past the threshold
+constexpr uint32_t kDevicePut = 0x00;              // write pointer
+constexpr uint32_t kDeviceThreshold = 0x04;        // make room once pPut reaches it
+constexpr uint32_t kDeviceFlags = 0x08;            // bit 2: recording (not handled)
+constexpr uint32_t kDeviceBase = 0x24;
+constexpr uint32_t kDeviceEnd = 0x28;
+constexpr uint32_t kDeviceFlagRecording = 0x4;
+
+struct DevicePush
+{
+    GuestAddress device = 0;
+    GuestAddress base = 0;
+    GuestAddress end = 0;
+    GuestAddress flushed = 0;
+};
+
+DevicePush g_device_push;
 
 // Makes `*block` hold at least `bytes`, reallocating page-granular guest heap
 // memory when it is smaller (the old contents are not kept).
@@ -170,6 +193,7 @@ void Execute(GuestAddress begin, GuestAddress end)
 void D3DDevice_BeginPush_4()
 {
     HleCall call;
+    FlushDevicePushBuffer();
     const uint32_t count = std::max<uint32_t>(call.Arg(0), 1);
     if (!Reserve(&g_push.buffer, &g_push.buffer_bytes, count * 4))
     {
@@ -191,10 +215,102 @@ void D3DDevice_EndPush()
     call.Return(kD3dOk, 1);
 }
 
+// Puts the device's write pointer back at the start of its buffer, once what
+// was written there is interpreted. Returns the new pPut.
+GuestAddress RewindDevicePushBuffer()
+{
+    FlushDevicePushBuffer();
+    if (g_device_push.device == 0)
+    {
+        return 0;
+    }
+    if ((Memory().Read8(g_device_push.device + kDeviceFlags) & kDeviceFlagRecording) != 0)
+    {
+        ReportOncePer("push buffer recording", 0, [] {
+            return std::string("device push buffer: recording (device +0x08 bit 2) is not supported");
+        });
+    }
+    Memory().Write32(g_device_push.device + kDevicePut, g_device_push.base);
+    g_device_push.flushed = g_device_push.base;
+    return g_device_push.base;
+}
+
+// DWORD* D3D_MakeRequestedSpace(DWORD MinimumSpace, DWORD RequestedSpace = eax)
+// (XDK 5849 LTCG, `_4__LTCG_eax2`, ret 4): room for at least MinimumSpace
+// bytes. The library waits for the GPU and wraps; here the buffer is
+// interpreted and rewound (design i051).
+void D3D_MakeRequestedSpace_4__LTCG_eax2()
+{
+    HleCall call;
+    const uint32_t minimum = call.Arg(0);
+    if (minimum > kDevicePushBytes - kDevicePushMargin)
+    {
+        ReportOncePer("push buffer request", 0, [&] {
+            return Format("device push buffer: request of %08X bytes is larger than the buffer", minimum);
+        });
+    }
+    call.Return(RewindDevicePushBuffer(), 1);
+}
+
+// void CDevice_KickOff() (`_0__LTCG_edx1`): hands the pushed methods to the
+// GPU; here they are interpreted.
+void CDevice_KickOff_0__LTCG_edx1()
+{
+    HleCall call;
+    FlushDevicePushBuffer();
+    call.Return(call.Eax(), 0);
+}
+
 }  // namespace
+
+void SetupDevicePushBuffer(GuestAddress device)
+{
+    runtime::GuestMemory& memory = Memory();
+    if (g_device_push.base == 0)
+    {
+        const auto buffer = Heap().Allocate(kDevicePushBytes, runtime::GuestHeap::kPageSize, false);
+        if (!buffer)
+        {
+            std::fprintf(stderr, "[d3d8] no guest memory for the device push buffer\n");
+            return;
+        }
+        g_device_push.base = *buffer;
+        g_device_push.end = *buffer + kDevicePushBytes;
+        memory.Fill(*buffer, 0, kDevicePushBytes);
+    }
+    g_device_push.device = device;
+    g_device_push.flushed = g_device_push.base;
+    memory.Write32(device + kDevicePut, g_device_push.base);
+    memory.Write32(device + kDeviceThreshold, g_device_push.end - kDevicePushMargin);
+    memory.Write32(device + kDeviceBase, g_device_push.base);
+    memory.Write32(device + kDeviceEnd, g_device_push.end);
+}
+
+void FlushDevicePushBuffer()
+{
+    if (g_device_push.device == 0)
+    {
+        return;
+    }
+    const GuestAddress put = Memory().Read32(g_device_push.device + kDevicePut);
+    if (put < g_device_push.flushed || put > g_device_push.end)
+    {
+        ReportOncePer("push buffer put", 0, [&] {
+            return Format("device push buffer: pPut %08X is outside [%08X, %08X]; realigned", put,
+                          g_device_push.flushed, g_device_push.end);
+        });
+        g_device_push.flushed = put >= g_device_push.base && put <= g_device_push.end ? put : g_device_push.flushed;
+        return;
+    }
+    const GuestAddress begin = g_device_push.flushed;
+    g_device_push.flushed = put;  // before Execute: a draw inside does not re-enter this range
+    Execute(begin, put);
+}
 
 void RegisterPushExports(runtime::HleRegistry& registry)
 {
+    registry.AddExport("d3d8", "D3D_MakeRequestedSpace_4__LTCG_eax2", &D3D_MakeRequestedSpace_4__LTCG_eax2);
+    registry.AddExport("d3d8", "CDevice_KickOff_0__LTCG_edx1", &CDevice_KickOff_0__LTCG_edx1);
     registry.AddExport("d3d8", "D3DDevice_BeginPush_4", &D3DDevice_BeginPush_4);
     registry.AddExport("d3d8", "D3DDevice_EndPush", &D3DDevice_EndPush);
 }

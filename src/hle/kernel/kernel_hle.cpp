@@ -29,6 +29,7 @@ void RegisterKernelHle(runtime::HleRegistry& registry)
 void InitializeKernel(const KernelConfig& config)
 {
     InitializeKernelData();
+    SetImageFileName(config.image_file_name);
     VfsInitialize(config.game_directory, config.hdd_root);
 }
 

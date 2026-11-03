@@ -177,6 +177,8 @@ bool DescribeTextureFormat(uint32_t format, TextureFormatInfo* info)
     case fmt::kA8L8:
         result.bits_per_pixel = 16;
         break;
+    case fmt::kYuy2:
+    case fmt::kUyvy:
     case fmt::kLinR5G6B5:
     case fmt::kLinA1R5G5B5:
     case fmt::kLinX1R5G5B5:
@@ -371,6 +373,31 @@ bool DecodeTextureLevel(uint32_t format, const uint8_t* source, uint32_t width, 
     }
     const uint32_t bytes = info.bits_per_pixel / 8;
     const uint32_t row = pitch != 0 ? pitch : width * bytes;
+    if (format == fmt::kYuy2 || format == fmt::kUyvy)
+    {
+        // Two pixels share one chroma pair; BT.601 with video (16..235) range
+        // (inferred: the format a movie decoder writes).
+        const bool yuy2 = format == fmt::kYuy2;
+        for (uint32_t z = 0; z < depth; ++z)
+        {
+            for (uint32_t y = 0; y < height; ++y)
+            {
+                for (uint32_t x = 0; x < width; ++x)
+                {
+                    const uint8_t* pair = source + (z * height + y) * row + (x & ~1u) * 2;
+                    const int luma = yuy2 ? pair[(x & 1) * 2] : pair[1 + (x & 1) * 2];
+                    const int u = (yuy2 ? pair[1] : pair[0]) - 128;
+                    const int v = (yuy2 ? pair[3] : pair[2]) - 128;
+                    const int c = 298 * (luma - 16);
+                    const auto clamp = [](int value) { return static_cast<uint32_t>(std::clamp(value >> 8, 0, 255)); };
+                    const size_t pixel = (static_cast<size_t>(z) * height + y) * width + x;
+                    Store(out + pixel * 4, clamp(c + 409 * v + 128), clamp(c - 100 * u - 208 * v + 128),
+                          clamp(c + 516 * u + 128), 255);
+                }
+            }
+        }
+        return true;
+    }
     for (uint32_t z = 0; z < depth; ++z)
     {
         for (uint32_t y = 0; y < height; ++y)

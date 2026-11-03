@@ -9,6 +9,7 @@
 #include "d3d8_globals.h"
 #include "d3d8_render_state.h"
 #include "d3d8_gl_buffers.h"
+#include "d3d8_push.h"
 #include "d3d8_internal.h"
 #include "d3d8_profile.h"
 #include "d3d8_shader.h"
@@ -21,6 +22,7 @@
 #include "rexbox/runtime/environment.h"
 #include "rexbox/runtime/thread_activity.h"
 
+#include <optional>
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -235,20 +237,19 @@ void InitializeDeviceState(const D3dState& state)
 // HRESULT Direct3D_CreateDevice(UINT Adapter, D3DDEVTYPE DeviceType, HWND hFocusWindow,
 //     DWORD BehaviorFlags, D3DPRESENT_PARAMETERS* pPresentationParameters,
 //     IDirect3DDevice8** ppReturnedDeviceInterface)
-void Direct3D_CreateDevice()
+//
+// CreateDevice is the body every calling convention of it shares; it returns
+// the HRESULT.
+uint32_t CreateDevice(uint32_t adapter, uint32_t device_type, uint32_t behavior, GuestAddress present_address,
+                      GuestAddress out)
 {
-    HleCall call;
-    const GuestAddress present_address = call.Arg(4);
-    const GuestAddress out = call.Arg(5);
-    if (call.Arg(0) != 0 || present_address == 0 || out == 0)
+    if (adapter != 0 || present_address == 0 || out == 0)
     {
-        call.Return(kD3dErrInvalidCall, 6);
-        return;
+        return kD3dErrInvalidCall;
     }
-    if (call.Arg(1) != kDevTypeHal)
+    if (device_type != kDevTypeHal)
     {
-        call.Return(kD3dErrInvalidDevice, 6);
-        return;
+        return kD3dErrInvalidDevice;
     }
 
     D3dState& state = State();
@@ -257,8 +258,7 @@ void Direct3D_CreateDevice()
     {
         std::fprintf(stderr, "[d3d8] Direct3D_CreateDevice called again; the device already exists\n");
         Memory().Write32(out, state.device);
-        call.Return(kD3dOk, 6);
-        return;
+        return kD3dOk;
     }
 
     PresentParameters pp = ReadPresentParameters(present_address);
@@ -274,8 +274,9 @@ void Direct3D_CreateDevice()
                  "depth %s format %02X, flags %08X, interval %u, behavior %08X\n",
                  pp.back_buffer_width, pp.back_buffer_height, pp.back_buffer_format, pp.back_buffer_count,
                  pp.multi_sample_type, pp.enable_auto_depth_stencil != 0 ? "on" : "off",
-                 pp.auto_depth_stencil_format, pp.flags, pp.presentation_interval, call.Arg(3));
+                 pp.auto_depth_stencil_format, pp.flags, pp.presentation_interval, behavior);
     state.present = pp;
+    state.behavior_flags = behavior;
     SetVerticalBlankRate(pp.refresh_rate);
 
     if (!DisplayDisabled())
@@ -284,24 +285,41 @@ void Direct3D_CreateDevice()
         if (!OpenDisplay(pp, &error))
         {
             std::fprintf(stderr, "[d3d8] cannot open the display: %s\n", error.c_str());
-            call.Return(kD3dErrNotAvailable, 6);
-            return;
+            return kD3dErrNotAvailable;
         }
         state.display_created = true;
         ApplyPictureAspect();  // 16:9 when the settings ask for widescreen
     }
 
-    const auto device = Heap().Allocate(kDeviceObjectSize, runtime::GuestHeap::kPageSize, false);
+    // An LTCG title's inlined code reaches the library's static device
+    // directly as well as through its pointer, so a title that binds
+    // "D3D_g_Device" gets that object (left as the image has it: the fields
+    // around it are other library globals). Otherwise a heap block (design
+    // i051).
+    const GuestAddress bound_device = runtime::Env().registry->FindVariable("D3D_g_Device");
+    std::optional<GuestAddress> device;
+    if (bound_device != 0)
+    {
+        device = bound_device;
+    }
+    else
+    {
+        device = Heap().Allocate(kDeviceObjectSize, runtime::GuestHeap::kPageSize, false);
+        if (device)
+        {
+            Memory().Fill(*device, 0, kDeviceObjectSize);
+        }
+    }
     if (!device || !CreateDeviceSurfaces(state))
     {
-        call.Return(kD3dErrNotAvailable, 6);
-        return;
+        return kD3dErrNotAvailable;
     }
-    Memory().Fill(*device, 0, kDeviceObjectSize);
     state.device = *device;
     // The library global the original sets; its own functions (and the
     // binding fences, d3d8_globals.h) read the device through it.
     SetDeviceObject(state.device);
+    // LTCG titles write methods into it themselves (design i051).
+    SetupDevicePushBuffer(state.device);
     if (state.display_created)
     {
         BindRenderTarget(state.render_target, state.depth_target);
@@ -310,7 +328,24 @@ void Direct3D_CreateDevice()
     lock.unlock();
     InitializeDeviceState(state);
     Memory().Write32(out, state.device);
-    call.Return(kD3dOk, 6);
+    return kD3dOk;
+}
+
+void Direct3D_CreateDevice()
+{
+    HleCall call;
+    call.Return(CreateDevice(call.Arg(0), call.Arg(1), call.Arg(3), call.Arg(4), call.Arg(5)), 6);
+}
+
+// HRESULT Direct3D_CreateDevice_4__LTCG_eax1_ecx3(DWORD BehaviorFlags = eax,
+//     D3DPRESENT_PARAMETERS* pPresentationParameters, IDirect3DDevice8** ppReturnedDeviceInterface = ecx)
+// D3D8LTCG's form (XDK 5849, reexec/reEXCEED's 0x00177A70): Adapter 0, the
+// HAL device and no focus window are folded in, and the one stack argument
+// is popped (ret 4). Issue #50.
+void Direct3D_CreateDevice_4__LTCG_eax1_ecx3()
+{
+    HleCall call;
+    call.Return(CreateDevice(0, kDevTypeHal, call.Eax(), call.Arg(0), call.Ecx()), 1);
 }
 
 // HRESULT D3DDevice_GetBackBuffer(INT BackBuffer, D3DBACKBUFFER_TYPE Type, D3DSurface** ppBackBuffer)
@@ -447,6 +482,7 @@ void D3DDevice_SetViewport()
 void D3DDevice_Clear()
 {
     HleCall call;
+    FlushDevicePushBuffer();  // what the title pushed comes first (design i051)
     const uint32_t count = call.Arg(0);
     const GuestAddress rects = call.Arg(1);
     const uint32_t flags = call.Arg(2);
@@ -571,6 +607,7 @@ void D3DDevice_Swap()
 {
     profile::Lap lap;
     HleCall call;
+    FlushDevicePushBuffer();  // what the title pushed comes first (design i051)
     D3dState& state = State();
     ++state.frame_count;
     bool presented = false;
@@ -840,6 +877,7 @@ void D3DDevice_BlockUntilVerticalBlank()
 void RegisterDeviceExports(runtime::HleRegistry& registry)
 {
     registry.AddExport("d3d8", "Direct3D_CreateDevice", &Direct3D_CreateDevice);
+    registry.AddExport("d3d8", "Direct3D_CreateDevice_4__LTCG_eax1_ecx3", &Direct3D_CreateDevice_4__LTCG_eax1_ecx3);
     registry.AddExport("d3d8", "D3DDevice_GetBackBuffer", &D3DDevice_GetBackBuffer);
     registry.AddExport("d3d8", "D3DDevice_GetRenderTarget", &D3DDevice_GetRenderTarget);
     registry.AddExport("d3d8", "D3DDevice_GetDepthStencilSurface", &D3DDevice_GetDepthStencilSurface);

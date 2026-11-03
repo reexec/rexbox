@@ -1123,6 +1123,8 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
                         pipeline.screen_space_offset_x, pipeline.screen_space_offset_y);
         uniforms->Set1f(program->wide, wide);
         // SetModelView's matrices replace world x view and the projection.
+        // An inlined SetTransform wrote the device's array directly.
+        SyncTransformsFromDevice();
         const std::array<float, 16> world_view =
             pipeline.model_view_set ? pipeline.model_view
                                     : Multiply(pipeline.transforms[ts::kWorld], pipeline.transforms[ts::kView]);
@@ -1239,6 +1241,7 @@ VertexSource StreamZero()
 void D3DDevice_DrawVertices()
 {
     HleCall call;
+    FlushDevicePushBuffer();  // what the title pushed comes first (design i051)
     IndexSource indices;
     indices.base = call.Arg(1);
     Draw("DrawVertices", call.Arg(0), call.Arg(2), indices, StreamZero());
@@ -1250,6 +1253,7 @@ void D3DDevice_DrawVertices()
 void D3DDevice_DrawIndexedVertices()
 {
     HleCall call;
+    FlushDevicePushBuffer();  // what the title pushed comes first (design i051)
     IndexSource indices;
     indices.address = call.Arg(2);
     indices.base = Pipeline().base_vertex_index;
@@ -1263,6 +1267,7 @@ void D3DDevice_DrawIndexedVertices()
 void D3DDevice_DrawVerticesUP()
 {
     HleCall call;
+    FlushDevicePushBuffer();  // what the title pushed comes first (design i051)
     VertexSource source;
     source.base = call.Arg(2);
     source.stride = call.Arg(3);
@@ -1275,6 +1280,7 @@ void D3DDevice_DrawVerticesUP()
 void D3DDevice_DrawIndexedVerticesUP()
 {
     HleCall call;
+    FlushDevicePushBuffer();  // what the title pushed comes first (design i051)
     IndexSource indices;
     indices.address = call.Arg(2);
     VertexSource source;

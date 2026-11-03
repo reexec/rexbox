@@ -162,6 +162,7 @@ struct D3dState
     std::mutex mutex;
     GuestAddress device = 0;  // the guest device object, 0 before CreateDevice
     PresentParameters present;
+    uint32_t behavior_flags = 0;  // CreateDevice's BehaviorFlags (GetCreationParameters)
     bool display_created = false;
     bool headless = false;  // run without a window (SetD3d8Headless / REXBOX_DISPLAY=none)
     GuestAddress back_buffers[2] = {0, 0};
@@ -193,6 +194,8 @@ void RegisterShaderExports(runtime::HleRegistry& registry);
 void RegisterDrawExports(runtime::HleRegistry& registry);
 void RegisterCapsExports(runtime::HleRegistry& registry);
 void RegisterDeviceExports(runtime::HleRegistry& registry);
+void RegisterQueryExports(runtime::HleRegistry& registry);  // d3d8_query.cpp (issue #56)
+void RegisterStateBlockExports(runtime::HleRegistry& registry);  // d3d8_stateblock.cpp (issue #57)
 
 }  // namespace rexbox::hle::d3d8
 

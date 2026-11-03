@@ -539,6 +539,21 @@ void XAudioCalculatePitch()
     call.Return(static_cast<uint32_t>(pitch), 1);
 }
 
+// HRESULT IDirectSoundBuffer_GetVoiceProperties(LPDIRECTSOUNDBUFFER, LPDSVOICEPROPS)
+// and the stream's: DSVOICEPROPS {dwMixBinCount, MixBinVolumePairs[8],
+// lPitch, lI3DL2DirectVolume, lI3DL2RoomVolume} (80 bytes, inferred). The HLE
+// voice has no hardware properties to report, so all zero (issue #56).
+void GetVoiceProperties()
+{
+    HleCall call;
+    constexpr uint32_t kVoicePropsBytes = 80;
+    if (call.Arg(1) != 0)
+    {
+        Memory().Fill(call.Arg(1), 0, kVoicePropsBytes);
+    }
+    call.Return(kDsOk, 2);
+}
+
 }  // namespace
 
 void ReadMixBins(Buffer& buffer, GuestAddress mix_bins)
@@ -564,6 +579,16 @@ void ReadMixBins(Buffer& buffer, GuestAddress mix_bins)
 
 void RegisterBufferExports(runtime::HleRegistry& registry)
 {
+    // Reached directly by an XDK 5849 title (issue #56): voice properties
+    // read as zero; 3D voice data, output (submix) buffers, play regions and
+    // playback synchronization are accepted, not rendered.
+    registry.AddExport("dsound", "IDirectSoundBuffer_GetVoiceProperties", &GetVoiceProperties);
+    registry.AddExport("dsound", "IDirectSoundStream_GetVoiceProperties", &GetVoiceProperties);
+    registry.AddExport("dsound", "IDirectSoundBuffer_Set3DVoiceData", &AcceptSetting<2>);
+    registry.AddExport("dsound", "IDirectSoundBuffer_Use3DVoiceData", &AcceptSetting<2>);
+    registry.AddExport("dsound", "IDirectSoundBuffer_SetOutputBuffer", &AcceptSetting<2>);
+    registry.AddExport("dsound", "IDirectSoundBuffer_SetPlayRegion", &AcceptSetting<3>);
+    registry.AddExport("dsound", "IDirectSound_SynchPlayback", &AcceptSetting<1>);
     registry.AddExport("dsound", "IDirectSoundBuffer_AddRef", &IDirectSoundBuffer_AddRef);
     registry.AddExport("dsound", "IDirectSoundBuffer_Release", &IDirectSoundBuffer_Release);
     registry.AddExport("dsound", "IDirectSoundBuffer_SetBufferData", &IDirectSoundBuffer_SetBufferData);

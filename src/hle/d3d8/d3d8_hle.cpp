@@ -1,6 +1,7 @@
 #include "rexbox/hle/d3d8/d3d8_hle.h"
 
 #include "d3d8_internal.h"
+#include "d3d8_ltcg.h"
 #include "d3d8_push.h"
 
 namespace rexbox::hle::d3d8
@@ -33,6 +34,9 @@ void RegisterD3d8Hle(runtime::HleRegistry& registry)
     RegisterDrawExports(registry);
     RegisterPushExports(registry);
     RegisterDeviceExports(registry);
+    RegisterQueryExports(registry);
+    RegisterStateBlockExports(registry);
+    RegisterLtcgExports(registry);  // after the public exports it re-frames
 }
 
 void SetD3d8Headless(bool headless)

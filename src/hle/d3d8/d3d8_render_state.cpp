@@ -5,7 +5,8 @@
 namespace rexbox::hle::d3d8
 {
 
-RenderStateLayout DeriveRenderStateLayout(uint32_t render_state, uint32_t deferred, uint32_t complex)
+RenderStateLayout DeriveRenderStateLayout(uint32_t render_state, uint32_t deferred, uint32_t complex,
+                                          uint32_t sample_alpha)
 {
     RenderStateLayout layout;
     if (render_state == 0 || deferred <= render_state || complex <= deferred || (deferred - render_state) % 4 != 0 ||
@@ -15,20 +16,25 @@ RenderStateLayout DeriveRenderStateLayout(uint32_t render_state, uint32_t deferr
     }
     const uint32_t deferred_first = (deferred - render_state) / 4;
     const uint32_t complex_first = (complex - render_state) / 4;
-    // The deferred block keeps its size; only the simple block may grow.
-    if (deferred_first < kLogicalDeferredFirst ||
-        complex_first - deferred_first != kLogicalComplexFirst - kLogicalDeferredFirst)
+    // Each block keeps 4134's states at its start and may grow at its end.
+    if (deferred_first < kLogicalDeferredFirst || complex_first - deferred_first < kDeferredStateCount)
     {
         return layout;
     }
     layout.deferred_first = deferred_first;
     layout.complex_first = complex_first;
+    if (sample_alpha > complex && (sample_alpha - complex) % 4 == 0 &&
+        (sample_alpha - complex) / 4 <= kComplexStateCount)
+    {
+        layout.sample_alpha_index = (sample_alpha - complex) / 4;
+        layout.complex_count = kComplexStateCount + 1;
+    }
     return layout;
 }
 
 uint32_t RenderStateSlotCount(const RenderStateLayout& layout)
 {
-    return layout.complex_first + kComplexStateCount;
+    return layout.complex_first + layout.complex_count;
 }
 
 uint32_t SlotFromLogical(const RenderStateLayout& layout, uint32_t logical)
@@ -41,9 +47,16 @@ uint32_t SlotFromLogical(const RenderStateLayout& layout, uint32_t logical)
     {
         return logical - kLogicalDeferredFirst + layout.deferred_first;
     }
-    if (logical < kLogicalStateCount)
+    if (logical == rs::kSampleAlpha)
     {
-        return logical - kLogicalComplexFirst + layout.complex_first;
+        return layout.sample_alpha_index != kNoRenderState ? layout.complex_first + layout.sample_alpha_index
+                                                            : kNoRenderState;
+    }
+    if (logical < kLogicalComplexFirst + kComplexStateCount)
+    {
+        const uint32_t index = logical - kLogicalComplexFirst;
+        const uint32_t shift = layout.sample_alpha_index != kNoRenderState && index >= layout.sample_alpha_index;
+        return layout.complex_first + index + shift;
     }
     return kNoRenderState;
 }
@@ -60,11 +73,18 @@ uint32_t LogicalFromSlot(const RenderStateLayout& layout, uint32_t slot)
     }
     if (slot < layout.complex_first)
     {
-        return slot - layout.deferred_first + kLogicalDeferredFirst;
+        const uint32_t index = slot - layout.deferred_first;
+        // Deferred states past 4134's (PresentationInterval, unused slots).
+        return index < kDeferredStateCount ? index + kLogicalDeferredFirst : kNoRenderState;
     }
     if (slot < RenderStateSlotCount(layout))
     {
-        return slot - layout.complex_first + kLogicalComplexFirst;
+        const uint32_t index = slot - layout.complex_first;
+        if (layout.sample_alpha_index == kNoRenderState || index < layout.sample_alpha_index)
+        {
+            return index + kLogicalComplexFirst;
+        }
+        return index == layout.sample_alpha_index ? rs::kSampleAlpha : index - 1 + kLogicalComplexFirst;
     }
     return kNoRenderState;
 }

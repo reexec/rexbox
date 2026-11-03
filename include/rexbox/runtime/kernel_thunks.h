@@ -17,6 +17,12 @@ namespace rexbox::runtime
 
 constexpr GuestAddress kKernelThunkVaBase = 0xFE000000;
 
+// Synthetic code addresses for HLE methods a title reaches through a guest
+// vtable (DirectSound streams, design i054): above the kernel thunks, so the
+// lifter's indirect-call check (which admits 0xFE000000 and up) lets them
+// through to the registry, and not mistaken for kernel imports.
+constexpr GuestAddress kHleMethodVaBase = 0xFF000000;
+
 constexpr GuestAddress KernelThunkVa(uint32_t ordinal)
 {
     return kKernelThunkVaBase + ordinal * 4;
@@ -24,7 +30,7 @@ constexpr GuestAddress KernelThunkVa(uint32_t ordinal)
 
 constexpr bool IsKernelThunkVa(GuestAddress address)
 {
-    return address >= kKernelThunkVaBase;
+    return address >= kKernelThunkVaBase && address < kHleMethodVaBase;
 }
 
 constexpr uint32_t KernelThunkOrdinal(GuestAddress address)

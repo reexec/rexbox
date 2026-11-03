@@ -2,12 +2,20 @@
 
 #include "dsound_internal.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
 
 namespace rexbox::hle::dsound
 {
+
+namespace
+{
+
+const std::chrono::steady_clock::time_point g_apu_start = std::chrono::steady_clock::now();
+
+}  // namespace
 
 DsoundState& State()
 {
@@ -62,6 +70,7 @@ void RegisterDsoundHle(runtime::HleRegistry& registry)
     RegisterBufferExports(registry);
     RegisterEffectsExports(registry);
     Register3dExports(registry);
+    RegisterStreamExports(registry);
 }
 
 void SetDsoundOutput(DsoundOutput output)
@@ -86,3 +95,11 @@ void RenderDsoundFrames(float* samples, uint32_t frames)
 }
 
 }  // namespace rexbox::hle::dsound
+
+extern "C" uint32_t rexbox_dsound_apu_sample_count(void)
+{
+    const auto elapsed = std::chrono::steady_clock::now() - rexbox::hle::dsound::g_apu_start;
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count();
+    // 48 samples per millisecond: us x 48 / 1000 (overflows only after millennia).
+    return static_cast<uint32_t>(static_cast<uint64_t>(us) * (rexbox::hle::dsound::kOutputRate / 1000) / 1000);
+}

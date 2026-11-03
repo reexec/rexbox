@@ -798,12 +798,36 @@ void CheckRenderStateLayout()
     bool round_trip = true;
     for (uint32_t logical = 0; logical < kLogicalStateCount; ++logical)
     {
-        round_trip = round_trip && LogicalFromSlot(xdk4531, SlotFromLogical(xdk4531, logical)) == logical;
+        // SampleAlpha has no slot before XDK 5849.
+        round_trip = round_trip && (logical == rs::kSampleAlpha ||
+                                    LogicalFromSlot(xdk4531, SlotFromLogical(xdk4531, logical)) == logical);
     }
     Expect(round_trip, "4531: every logical state survives slot and back");
 
-    const RenderStateLayout odd = DeriveRenderStateLayout(0x00102160, 0x001022AC, 0x00102340);
-    ExpectEqual(odd.deferred_first, 82, "a deferred block of the wrong size falls back to 4134");
+    const RenderStateLayout small = DeriveRenderStateLayout(0x00102160, 0x001022AC, 0x00102330);
+    ExpectEqual(small.deferred_first, 82, "a deferred block smaller than 4134's falls back to 4134");
+
+    // Pump It Up: Exceed (XDK 5849, issue #60): D3D_g_RenderState 0x00185A98,
+    // deferred 0x00185C08 (slot 92), complex 0x00185CB8 (slot 136),
+    // D3DRS_SampleAlpha 0x00185D10 (complex index 22).
+    const RenderStateLayout xdk5849 = DeriveRenderStateLayout(0x00185A98, 0x00185C08, 0x00185CB8, 0x00185D10);
+    ExpectEqual(xdk5849.deferred_first, 92, "5849 layout: deferred block at 92");
+    ExpectEqual(xdk5849.complex_first, 136, "5849 layout: complex block at 136");
+    ExpectEqual(RenderStateSlotCount(xdk5849), 166, "5849 layout: 166 slots (its default-state loop's end)");
+    ExpectEqual(SlotFromLogical(xdk5849, rs::kFogEnable), 92, "5849: FogEnable at 92 (D3DRS_FogEnable)");
+    ExpectEqual(SlotFromLogical(xdk5849, rs::kFillMode), 139, "5849: FillMode at 139 (D3DRS_FillMode)");
+    ExpectEqual(SlotFromLogical(xdk5849, rs::kZBias), 149, "5849: ZBias at 149 (D3DRS_ZBias)");
+    ExpectEqual(SlotFromLogical(xdk5849, rs::kSampleAlpha), 158, "5849: SampleAlpha at 158 (D3DRS_SampleAlpha)");
+    ExpectEqual(SlotFromLogical(xdk5849, rs::kDxt1NoiseEnable), 159, "5849: Dxt1NoiseEnable after it at 159");
+    ExpectEqual(SlotFromLogical(xdk5849, rs::kDoNotCullUncompressed), 165, "5849: the last state at 165");
+    ExpectEqual(LogicalFromSlot(xdk5849, 127), kNoRenderState, "5849: deferred slot 127 is past 4134's");
+    bool round_trip_5849 = true;
+    for (uint32_t logical = 0; logical < kLogicalStateCount; ++logical)
+    {
+        const uint32_t slot = SlotFromLogical(xdk5849, logical);
+        round_trip_5849 = round_trip_5849 && slot != kNoRenderState && LogicalFromSlot(xdk5849, slot) == logical;
+    }
+    Expect(round_trip_5849, "5849: every logical state survives slot and back");
 }
 
 // P8 through a palette (D3DCOLOR entries, A8R8G8B8), swizzled indices.

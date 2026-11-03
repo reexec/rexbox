@@ -23,6 +23,15 @@ void DrawInlineVertices(uint32_t primitive, runtime::GuestAddress data, uint32_t
 // (SetVertexShaderInput's or SetStreamSource's) as `primitive` (d3d8_draw.cpp).
 void DrawArrayElements(uint32_t primitive, runtime::GuestAddress indices, uint32_t count);
 
+// The device push buffer an LTCG title writes itself (design i051): gives the
+// device object at `device` a guest buffer laid out as XDK 5849's library
+// does (+0 pPut, +4 threshold, +0x24 base, +0x28 end).
+void SetupDevicePushBuffer(runtime::GuestAddress device);
+
+// Interprets what the title wrote into the device push buffer since the last
+// flush. Called before every HLE call that draws, clears or presents.
+void FlushDevicePushBuffer();
+
 void RegisterPushExports(runtime::HleRegistry& registry);
 
 }  // namespace rexbox::hle::d3d8

@@ -246,6 +246,8 @@ uint64_t InterruptTime100ns();
 
 // Kernel data area: allocates the data exports and starts the tick thread.
 void InitializeKernelData();
+// XeImageFileName: \Device\CdRom0\<file_name> (after InitializeKernelData).
+void SetImageFileName(const std::string& file_name);
 
 // The thread whose APC queue the caller uses: the current guest thread, or a
 // per-host-thread record outside guest threads (tools).

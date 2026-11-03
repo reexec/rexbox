@@ -5,6 +5,8 @@
 
 #include "kernel_internal.h"
 
+#include <algorithm>
+
 namespace rexbox::hle::kernel
 {
 
@@ -274,6 +276,37 @@ void MmSetAddressProtect()
     call.Return(0, 3);
 }
 
+// NTSTATUS MmQueryStatistics(PMM_STATISTICS MemoryStatistics)
+// MM_STATISTICS {ULONG Length (0x24), TotalPhysicalPages, AvailablePages,
+// VirtualMemoryBytesCommitted, VirtualMemoryBytesReserved, CachePagesCommitted,
+// PoolPagesCommitted, StackPagesCommitted, ImagePagesCommitted}; XAPI's
+// GlobalMemoryStatus reads it (issue #52). The guest heap stands for the
+// retail unit's 64 MiB; what it has given out counts as committed.
+void MmQueryStatistics()
+{
+    HleCall call;
+    const GuestAddress stats = call.Arg(0);
+    constexpr uint32_t kStatisticsLength = 0x24;
+    runtime::GuestMemory& memory = Memory();
+    if (stats == 0 || memory.Read32(stats) != kStatisticsLength)
+    {
+        call.Return(kStatusInvalidParameter, 1);
+        return;
+    }
+    const uint32_t page = runtime::GuestHeap::kPageSize;
+    const auto total = static_cast<uint32_t>(runtime::GuestMemory::kRetailRamSize);
+    const uint32_t available = std::min(Heap().free_bytes(), total);
+    memory.Write32(stats + 0x04, total / page);
+    memory.Write32(stats + 0x08, available / page);
+    memory.Write32(stats + 0x0C, total - available);
+    memory.Write32(stats + 0x10, total - available);
+    memory.Write32(stats + 0x14, 0);
+    memory.Write32(stats + 0x18, 0);
+    memory.Write32(stats + 0x1C, 0);
+    memory.Write32(stats + 0x20, 0);
+    call.Return(kStatusSuccess, 1);
+}
+
 // VOID MmLockUnlockBufferPages(PVOID BaseAddress, SIZE_T NumberOfBytes, BOOLEAN UnlockPages)
 void MmLockUnlockBufferPages()
 {
@@ -353,6 +386,7 @@ void RegisterMemoryExports(runtime::HleRegistry& registry)
     registry.AddExport("kernel", "MmAllocateSystemMemory", &MmAllocateSystemMemory);
     registry.AddExport("kernel", "MmFreeSystemMemory", &MmFreeSystemMemory);
     registry.AddExport("kernel", "MmQueryAllocationSize", &MmQueryAllocationSize);
+    registry.AddExport("kernel", "MmQueryStatistics", &MmQueryStatistics);
     registry.AddExport("kernel", "MmGetPhysicalAddress", &MmGetPhysicalAddress);
     registry.AddExport("kernel", "MmQueryAddressProtect", &MmQueryAddressProtect);
     registry.AddExport("kernel", "MmSetAddressProtect", &MmSetAddressProtect);

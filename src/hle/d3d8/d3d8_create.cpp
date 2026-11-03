@@ -6,6 +6,7 @@
 #include "d3d8_gl_textures.h"
 #include "d3d8_internal.h"
 #include "d3d8_resource.h"
+#include "d3d8_trace.h"
 
 #include <algorithm>
 
@@ -452,6 +453,46 @@ void D3DTexture_LockRect()
     call.Return(kD3dOk, 5);
 }
 
+// void Lock2DSurface(D3DPixelContainer* pPixels, D3DCUBEMAP_FACES FaceType,
+//     UINT Level, D3DLOCKED_RECT* pLockedRect = esi, CONST RECT* pRect = eax,
+//     DWORD Flags) (XDK 5849 LTCG, `_16__LTCG_esi4_eax5`, ret 16; the mapping
+// from the lifted body: [esi] = pitch, [esi + 4] = bits; issue #56). The
+// library's common lock for surfaces and textures; the face offset of a cube
+// map is not applied (reported).
+void Lock2DSurface_16__LTCG_esi4_eax5()
+{
+    HleCall call;
+    const GuestAddress pixels = call.Arg(0);
+    const uint32_t face = call.Arg(1);
+    const uint32_t level = call.Arg(2);
+    const GuestAddress locked = call.Esi();
+    const GuestAddress rect = call.Eax();
+    if (pixels == 0 || locked == 0)
+    {
+        call.Return(kD3dErrInvalidCall, 4);
+        return;
+    }
+    if (face != 0)
+    {
+        ReportOncePer("lock cube face", 0, [&] {
+            return Format("Lock2DSurface: cube face %u is locked at face 0's data", face);
+        });
+    }
+    runtime::GuestMemory& memory = Memory();
+    const LevelLayout layout = HeaderLevelLayout(pixels, level);
+    uint32_t offset = TextureLevelOffset(pixels, level);
+    if (rect != 0)
+    {
+        const uint32_t left = memory.Read32(rect + 0);
+        const uint32_t top = memory.Read32(rect + 4);
+        offset += top * layout.pitch + ((left * FormatBitsPerPixel(HeaderFormat(pixels))) >> 3);
+    }
+    memory.Write32(locked + 0, layout.pitch);
+    memory.Write32(locked + 4, memory.Read32(pixels + header::kData) + offset);
+    MarkTextureWritten(pixels);
+    call.Return(kD3dOk, 4);
+}
+
 // HRESULT D3DVolumeTexture_LockBox(D3DVolumeTexture* pThis, UINT Level, D3DLOCKED_BOX* pLockedBox, const D3DBOX* pBox, DWORD Flags)
 void D3DVolumeTexture_LockBox()
 {
@@ -561,6 +602,7 @@ void RegisterCreateExports(runtime::HleRegistry& registry)
     registry.AddExport("d3d8", "D3DTexture_GetLevelDesc", &D3DTexture_GetLevelDesc);
     registry.AddExport("d3d8", "D3DSurface_LockRect", &D3DSurface_LockRect);
     registry.AddExport("d3d8", "D3DTexture_LockRect", &D3DTexture_LockRect);
+    registry.AddExport("d3d8", "Lock2DSurface_16__LTCG_esi4_eax5", &Lock2DSurface_16__LTCG_esi4_eax5);
     registry.AddExport("d3d8", "D3DVolumeTexture_LockBox", &D3DVolumeTexture_LockBox);
     registry.AddExport("d3d8", "D3DVertexBuffer_Lock", &D3DVertexBuffer_Lock);
     registry.AddExport("d3d8", "D3D_AllocContiguousMemory", &D3D_AllocContiguousMemory);

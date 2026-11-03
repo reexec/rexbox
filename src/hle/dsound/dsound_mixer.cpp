@@ -431,6 +431,7 @@ void MixLocked(float* samples, uint32_t frames)
     {
         MixBuffer(entry.first, entry.second, samples, frames);
     }
+    MixStreamsLocked(samples, frames);
 }
 
 void StartOutputLocked()

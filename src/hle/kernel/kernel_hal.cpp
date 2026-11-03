@@ -79,6 +79,23 @@ void KeQueryInterruptTime()
     HleCall().Return64(InterruptTime100ns(), 0);
 }
 
+// The performance counter is the ACPI timer, 3.375 MHz on the console
+// (inferred from Cxbx-Reloaded's constant, used as knowledge only; issue #52).
+constexpr uint64_t kPerformanceFrequency = 3375000;
+
+// ULONGLONG KeQueryPerformanceCounter(VOID)
+void KeQueryPerformanceCounter()
+{
+    // 100 ns units to 3.375 MHz ticks: x 3375000 / 10000000 = x 27 / 80.
+    HleCall().Return64(InterruptTime100ns() * 27 / 80, 0);
+}
+
+// ULONGLONG KeQueryPerformanceFrequency(VOID)
+void KeQueryPerformanceFrequency()
+{
+    HleCall().Return64(kPerformanceFrequency, 0);
+}
+
 // VOID KeStallExecutionProcessor(ULONG MicroSeconds)
 void KeStallExecutionProcessor()
 {
@@ -328,6 +345,8 @@ void RegisterHalExports(runtime::HleRegistry& registry)
     registry.AddExport("kernel", "KeRaiseIrqlToDpcLevel", &KeRaiseIrqlToDpcLevel);
     registry.AddExport("kernel", "KeQuerySystemTime", &KeQuerySystemTime);
     registry.AddExport("kernel", "KeQueryInterruptTime", &KeQueryInterruptTime);
+    registry.AddExport("kernel", "KeQueryPerformanceCounter", &KeQueryPerformanceCounter);
+    registry.AddExport("kernel", "KeQueryPerformanceFrequency", &KeQueryPerformanceFrequency);
     registry.AddExport("kernel", "KeStallExecutionProcessor", &KeStallExecutionProcessor);
     registry.AddExport("kernel", "KeInitializeInterrupt", &KeInitializeInterrupt);
     registry.AddExport("kernel", "KeConnectInterrupt", &KeConnectInterrupt);

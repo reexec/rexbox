@@ -505,7 +505,10 @@ std::string GenerateFixedFunctionVertexShader(const FixedFunctionKey& key, bool 
     if (!lighting)
     {
         text += key.has_diffuse ? "    v_diffuse = a_diffuse.bgra;\n" : "    v_diffuse = vec4(1.0);\n";
-        text += key.has_specular ? "    v_specular = a_specular.bgra;\n" : "    v_specular = vec4(0.0);\n";
+        // An absent specular is black with alpha 1, so D3DFOG_NONE fog (its
+        // alpha) leaves the vertex unfogged: a 2D quad drawn with fog on stays
+        // visible (Pump It Up: Exceed's movie quad; issue #60, inferred).
+        text += key.has_specular ? "    v_specular = a_specular.bgra;\n" : "    v_specular = vec4(0.0, 0.0, 0.0, 1.0);\n";
     }
     if (!key.stage_coords)
     {

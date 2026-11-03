@@ -106,6 +106,14 @@ struct PipelineState
 
 PipelineState& Pipeline();
 
+// The library device's own transform array (design i060): an LTCG title's
+// inlined SetTransform writes it directly (device + offset + State x 64),
+// so draws read it back, and the HLE's own setters write it as well. Active
+// when the title binds "D3DDevice__m_Transform_OFFSET" (0xC60 in XDK 5849).
+constexpr uint32_t kDeviceTransforms = 10;  // D3DTS_VIEW .. the four world matrices
+void SyncTransformsFromDevice();
+void StoreTransformToDevice(uint32_t state);
+
 // A matrix producing the vertex-shader epilogue's screen coordinates (such as
 // SetModelView's composite) turned into one producing clip coordinates.
 std::array<float, 16> ScreenToClip(const std::array<float, 16>& screen);
