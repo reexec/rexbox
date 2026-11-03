@@ -16,7 +16,6 @@ namespace rexbox::hle::d3d8
 namespace
 {
 
-constexpr uint32_t kDevTypeHal = 1;
 constexpr uint32_t kFieldProgressive = 3;  // D3DFIELD_PROGRESSIVE (inferred)
 
 uint32_t FloatBits(float value)

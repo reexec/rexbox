@@ -195,6 +195,7 @@ void RegisterDrawExports(runtime::HleRegistry& registry);
 void RegisterCapsExports(runtime::HleRegistry& registry);
 void RegisterDeviceExports(runtime::HleRegistry& registry);
 void RegisterQueryExports(runtime::HleRegistry& registry);  // d3d8_query.cpp (issue #56)
+void RegisterStateBlockExports(runtime::HleRegistry& registry);  // d3d8_stateblock.cpp (issue #57)
 
 }  // namespace rexbox::hle::d3d8
 

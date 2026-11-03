@@ -8,12 +8,13 @@
 // The guest object is a block whose first DWORD points at a guest vtable in
 // XDK 5849's order (AddRef, Release, GetInfo, GetStatus, Process,
 // Discontinuity, Flush, destructor); its entries are synthetic code
-// addresses bound to the exports below, so the title's indirect calls reach
-// them.
+// addresses (0xFF000000 and up) bound to the exports below, so the title's
+// indirect calls reach them.
 
 #include "dsound_internal.h"
 
 #include "rexbox/runtime/guest_cpu.h"
+#include "rexbox/runtime/kernel_thunks.h"
 
 #include <algorithm>
 #include <array>
@@ -54,8 +55,8 @@ constexpr uint32_t kStatusAcceptInput = 0x1;
 // XMO_STREAMF_* in XMEDIAINFO.dwFlags: whole packets, any size.
 constexpr uint32_t kInfoFlags = 0x0;
 
-// The vtable's synthetic code addresses: below the kernel thunks (0xFE000000).
-constexpr GuestAddress kMethodVaBase = 0xFD000000;
+// The vtable's synthetic code addresses (rexbox/runtime/kernel_thunks.h).
+constexpr GuestAddress kMethodVaBase = runtime::kHleMethodVaBase;
 constexpr const char* kMethodNames[] = {
     "DSStream_AddRef",        "DSStream_Release", "DSStream_GetInfo", "DSStream_GetStatus",
     "DSStream_Process",       "DSStream_Discontinuity", "DSStream_Flush", "DSStream_Destructor",

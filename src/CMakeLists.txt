@@ -116,6 +116,7 @@ add_library(rexbox_hle_d3d8 STATIC
     hle/d3d8/d3d8_push.cpp
     hle/d3d8/d3d8_ltcg.cpp
     hle/d3d8/d3d8_query.cpp
+    hle/d3d8/d3d8_stateblock.cpp
 )
 target_link_libraries(rexbox_hle_d3d8 PUBLIC rexbox_runtime)
 
