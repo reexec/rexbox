@@ -92,6 +92,13 @@ jobs:
             for p in libasound2-dev libpulse-dev libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libdrm-dev libgbm-dev libgl-dev libegl-dev; do
               i386="$i386 $p:i386"
             done
+            # glib's development files (pulled in through libpulse-dev) need
+            # libglib2.0-dev-bin-linux, a name only the amd64 libglib2.0-dev-bin
+            # (Multi-Arch: foreign) provides. With nothing of glib's installed
+            # yet, apt takes the i386 binaries for it, which cannot sit beside
+            # the amd64 ones, and gives up; installing the amd64 package first
+            # lets the i386 libraries use it (issue #46).
+            sudo apt-get install -y libglib2.0-dev-bin
             sudo apt-get install -y gcc-multilib g++-multilib ninja-build $i386
           else
             sudo apt-get install -y $packages
