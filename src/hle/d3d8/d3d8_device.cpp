@@ -4,6 +4,7 @@
 
 #include "d3d8_capture.h"
 #include "d3d8_gl.h"
+#include "d3d8_gl_program_cache.h"
 #include "d3d8_gl_targets.h"
 #include "d3d8_globals.h"
 #include "d3d8_render_state.h"
@@ -54,6 +55,21 @@ bool DisplayDisabled()
 bool HaveGl()
 {
     return State().display_created;
+}
+
+// The thread that presents, which holds the GL context.
+thread_local bool t_presenting_thread = false;
+
+// The presenting thread is about to sleep until `wake`: it makes stored
+// programs ahead of their use in that time, stopping short of it
+// (docs/design/20261103-i023-program-warmup.md).
+void IdleUntil(std::chrono::steady_clock::time_point wake)
+{
+    constexpr auto kMargin = std::chrono::milliseconds(2);
+    if (t_presenting_thread && HaveGl())
+    {
+        WarmProgramCache(wake - kMargin);
+    }
 }
 
 PresentParameters ReadPresentParameters(GuestAddress address)
@@ -568,6 +584,8 @@ void D3DDevice_Swap()
                                        : state.back_buffers[0];
         DumpFrameIfRequested(shown, state.frame_count);
         lap.Mark(profile::Phase::kPresent);
+        t_presenting_thread = true;
+        IdleUntil(QueuedPresentTime());
         QueuePresent(state.present.presentation_interval);
         lap.Mark(profile::Phase::kWait);
         PresentRenderTarget(shown, state.gamma_ramp);
@@ -812,6 +830,7 @@ void D3DDevice_BlockUntilVerticalBlank()
 {
     HleCall call;
     profile::Scope wait(profile::Phase::kWait);
+    IdleUntil(NextVerticalBlankTime());
     WaitForVerticalBlank();
     call.Return(kD3dOk, 0);
 }

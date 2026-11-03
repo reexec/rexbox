@@ -427,10 +427,12 @@ BoundTexture ResolveTexture(GuestAddress header, GuestAddress palette)
         cached.palette_data = palette_data;
         cached.palette_common = palette_common;
         cached.palette_hash = paletted && palette != 0 ? SampleHash(palette_data & kPhysicalMask, palette_bytes) : 0;
+        const auto started = std::chrono::steady_clock::now();
         if (!Upload(header, &cached))
         {
             cached.bound.kind = SamplerKind::kNone;
         }
+        profile::CountTextureUpload(cached.gl_bytes, std::chrono::steady_clock::now() - started);
     }
     return cached.bound.kind == SamplerKind::kNone ? BoundTexture{} : cached.bound;
 }

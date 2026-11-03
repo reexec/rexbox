@@ -14,6 +14,7 @@
 #ifndef REXBOX_HLE_D3D8_D3D8_GL_PROGRAM_CACHE_H
 #define REXBOX_HLE_D3D8_D3D8_GL_PROGRAM_CACHE_H
 
+#include <chrono>
 #include <cstdint>
 #include <string>
 
@@ -34,6 +35,12 @@ bool StoreProgram(uint32_t program, const std::string& vertex_source, const std:
 
 // Asks the driver, before linking, to keep the program's binary.
 void MarkProgramRetrievable(uint32_t program);
+
+// Makes stored programs ahead of their use, most recently used first, until
+// `deadline` (docs/design/20261103-i023-program-warmup.md); LoadCachedProgram
+// hands them out. Called on the GL thread while it would otherwise wait.
+// REXBOX_SHADER_WARM=<n> warms at most n entries (default 1024, 0 none).
+void WarmProgramCache(std::chrono::steady_clock::time_point deadline);
 
 }  // namespace rexbox::hle::d3d8
 

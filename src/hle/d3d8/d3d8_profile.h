@@ -6,6 +6,11 @@
 // the processor time the presenting thread used per frame, which other
 // processes on the machine disturb less than the wall time.
 //
+// REXBOX_D3D8_SLOW_FRAME=<ms>: one line for every present-to-present time
+// longer than <ms>, with that frame's phases, its texture uploads and the
+// programs it made, to find what a long frame spent its time on (diagnostic;
+// works with or without REXBOX_D3D8_PROFILE).
+//
 // REXBOX_SAMPLE=<first>-<last>[:<file>]: samples the presenting thread's
 // instruction pointer from present <first> to present <last> and writes the
 // histogram (platform/sampler.h) to <file>, default rexbox_samples.txt.
@@ -53,6 +58,12 @@ void CountProgram(bool cached, std::chrono::steady_clock::duration elapsed);
 // A compiled program written to the binary cache; `elapsed` covers getting
 // the binary and writing the entry, which CountProgram does not.
 void CountProgramStore(std::chrono::steady_clock::duration elapsed);
+// A stored program made ahead of its use while the presenting thread would
+// wait (`made` false: the entry was refused); `elapsed` is the time it took.
+void CountProgramWarm(bool made, std::chrono::steady_clock::duration elapsed);
+// A texture (all its levels) uploaded to GL, `bytes` as uploaded, taking
+// `elapsed` with its conversion.
+void CountTextureUpload(uint64_t bytes, std::chrono::steady_clock::duration elapsed);
 // Called once per present with the present's number; prints a report every
 // n presents and starts or stops sampling.
 void EndFrame(uint32_t frame);

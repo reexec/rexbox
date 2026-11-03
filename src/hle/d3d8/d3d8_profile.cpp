@@ -29,6 +29,15 @@ uint32_t Interval()
     return interval;
 }
 
+uint32_t SlowFrameMs()
+{
+    static const uint32_t ms = [] {
+        const char* value = std::getenv("REXBOX_D3D8_SLOW_FRAME");
+        return value != nullptr ? static_cast<uint32_t>(std::strtoul(value, nullptr, 10)) : 0u;
+    }();
+    return ms;
+}
+
 // Only the presenting thread counts: the first EndFrame marks it, and other
 // threads (a title's vblank thread, for one) are ignored.
 thread_local bool t_presenting = false;
@@ -51,6 +60,9 @@ uint32_t g_programs_cached = 0;
 Clock::duration g_program_time{};
 uint32_t g_programs_stored = 0;
 Clock::duration g_store_time{};
+uint32_t g_programs_warmed = 0;
+uint32_t g_programs_refused = 0;
+Clock::duration g_warm_time{};
 uint64_t g_compare_bytes = 0;
 uint64_t g_compares_again = 0;
 uint32_t g_frames = 0;
@@ -60,6 +72,21 @@ Clock::duration g_worst_frame{};    // the longest present-to-present time in th
 uint32_t g_slow_frames = 0;         // frames longer than two vertical blanks (33.4 ms)
 uint64_t g_window_cpu_ns = 0;
 bool g_started = false;
+
+// The current frame alone, for REXBOX_D3D8_SLOW_FRAME.
+std::array<Clock::duration, static_cast<size_t>(Phase::kCount)> g_frame_phases = {};
+uint32_t g_frame_draws = 0;
+uint32_t g_frame_textures = 0;
+uint64_t g_frame_texture_bytes = 0;
+Clock::duration g_frame_texture_time{};
+uint32_t g_frame_programs = 0;
+Clock::duration g_frame_program_time{};
+uint64_t g_frame_cpu_ns = 0;
+// Slow-frame lines held until FlushSlowFrames writes them.
+constexpr uint32_t kSlowFlushFrames = 600;
+std::string g_slow_text;
+uint32_t g_slow_flush_count = 0;
+bool g_slow_flushed = false;  // the frame being measured began with that write
 
 struct SampleWindow
 {
@@ -126,7 +153,7 @@ double Milliseconds(Clock::duration d)
 
 bool Enabled()
 {
-    return Interval() != 0;
+    return Interval() != 0 || SlowFrameMs() != 0;
 }
 
 void Add(Phase phase, Clock::duration elapsed)
@@ -136,6 +163,18 @@ void Add(Phase phase, Clock::duration elapsed)
         return;
     }
     g_phases[static_cast<size_t>(phase)] += elapsed;
+    g_frame_phases[static_cast<size_t>(phase)] += elapsed;
+}
+
+void CountTextureUpload(uint64_t bytes, Clock::duration elapsed)
+{
+    if (!Enabled() || !t_presenting)
+    {
+        return;
+    }
+    ++g_frame_textures;
+    g_frame_texture_bytes += bytes;
+    g_frame_texture_time += elapsed;
 }
 
 void CountDraw(bool program)
@@ -145,6 +184,7 @@ void CountDraw(bool program)
         return;
     }
     ++g_draws;
+    ++g_frame_draws;
     g_program_draws += program ? 1 : 0;
 }
 
@@ -185,6 +225,8 @@ void CountProgram(bool cached, Clock::duration elapsed)
         return;
     }
     ++(cached ? g_programs_cached : g_programs_built);
+    ++g_frame_programs;
+    g_frame_program_time += elapsed;
     g_program_time += elapsed;
 }
 
@@ -198,6 +240,16 @@ void CountProgramStore(Clock::duration elapsed)
     g_store_time += elapsed;
 }
 
+void CountProgramWarm(bool made, Clock::duration elapsed)
+{
+    if (!Enabled() || !t_presenting)
+    {
+        return;
+    }
+    ++(made ? g_programs_warmed : g_programs_refused);
+    g_warm_time += elapsed;
+}
+
 void CountCompare(size_t bytes, bool again)
 {
     if (!Enabled() || !t_presenting)
@@ -209,12 +261,54 @@ void CountCompare(size_t bytes, bool again)
     g_compare_bytes += bytes;
 }
 
+// REXBOX_D3D8_SLOW_FRAME: the frame that just ended, when it was long.
+void ReportSlowFrame(uint32_t frame, Clock::duration since_last, uint64_t cpu_ns)
+{
+    const double wall = Milliseconds(since_last);
+    if (wall > static_cast<double>(SlowFrameMs()))
+    {
+        double measured = 0.0;
+        for (const Clock::duration d : g_frame_phases)
+        {
+            measured += Milliseconds(d);
+        }
+        const auto ms = [](Phase phase) { return Milliseconds(g_frame_phases[static_cast<size_t>(phase)]); };
+        const double draw = ms(Phase::kIndices) + ms(Phase::kSetup) + ms(Phase::kTarget) + ms(Phase::kUpload) +
+                            ms(Phase::kAttributes) + ms(Phase::kConstants) + ms(Phase::kTextures) +
+                            ms(Phase::kState) + ms(Phase::kDraw);
+        g_slow_text += Format(
+                     "[d3d8 slow frame] %u: %.1f ms, cpu %.1f | draw phases %.1f (setup %.1f) present %.1f wait %.1f | "
+                     "other %.1f | draws %u, textures %u (%.0f KiB, %.1f ms), programs %u (%.1f ms)%s\n",
+                     frame, wall, static_cast<double>(cpu_ns - g_frame_cpu_ns) / 1e6, draw, ms(Phase::kSetup),
+                     ms(Phase::kPresent), ms(Phase::kWait), wall - measured, g_frame_draws, g_frame_textures,
+                     static_cast<double>(g_frame_texture_bytes) / 1024.0, Milliseconds(g_frame_texture_time),
+                     g_frame_programs, Milliseconds(g_frame_program_time),
+                     g_slow_flushed ? " (began with the held reports' write)" : "");
+    }
+}
+
+// Writes the held slow-frame lines every kSlowFlushFrames frames. A line
+// written as each long frame ended cost the next frame the write (over 10 ms
+// to a redirected file), which held a 60 fps title at 30 fps.
+void FlushSlowFrames()
+{
+    g_slow_flushed = false;
+    if (g_slow_text.empty() || ++g_slow_flush_count < kSlowFlushFrames)
+    {
+        return;
+    }
+    std::fputs(g_slow_text.c_str(), stderr);
+    g_slow_text.clear();
+    g_slow_flush_count = 0;
+    g_slow_flushed = true;
+}
+
 void EndFrame(uint32_t frame)
 {
     SampleAt(frame);
     t_presenting = true;
     const uint32_t interval = Interval();
-    if (interval == 0)
+    if (interval == 0 && SlowFrameMs() == 0)
     {
         return;
     }
@@ -226,8 +320,26 @@ void EndFrame(uint32_t frame)
         const Clock::duration since_last = now - g_last_present;
         g_worst_frame = std::max(g_worst_frame, since_last);
         g_slow_frames += since_last > std::chrono::microseconds(33400) ? 1 : 0;
+        if (SlowFrameMs() != 0)
+        {
+            ReportSlowFrame(frame, since_last, cpu_ns);
+        }
+    }
+    g_frame_phases = {};
+    g_frame_draws = g_frame_textures = g_frame_programs = 0;
+    g_frame_texture_bytes = 0;
+    g_frame_texture_time = g_frame_program_time = {};
+    g_frame_cpu_ns = cpu_ns;
+    if (SlowFrameMs() != 0)
+    {
+        FlushSlowFrames();
     }
     g_last_present = now;
+    if (interval == 0)
+    {
+        g_started = true;
+        return;
+    }
     if (!g_started)
     {
         g_started = true;
@@ -276,15 +388,16 @@ void EndFrame(uint32_t frame)
         }
         std::fprintf(stderr, "%s\n", line.c_str());
     }
-    if (g_programs_built + g_programs_cached != 0)
+    if (g_programs_built + g_programs_cached + g_programs_warmed + g_programs_refused != 0)
     {
         // Programs made in this window (not per frame): they come in bursts.
         std::fprintf(stderr,
-                     "[d3d8 profile] programs: %u compiled, %u from the binary cache, %.1f ms in all; stored %u, %.1f ms\n",
+                     "[d3d8 profile] programs: %u compiled, %u from the binary cache, %.1f ms in all; stored %u, %.1f ms; "
+                     "warmed %u (%u refused), %.1f ms\n",
                      g_programs_built, g_programs_cached, Milliseconds(g_program_time), g_programs_stored,
-                     Milliseconds(g_store_time));
-        g_programs_built = g_programs_cached = g_programs_stored = 0;
-        g_program_time = g_store_time = {};
+                     Milliseconds(g_store_time), g_programs_warmed, g_programs_refused, Milliseconds(g_warm_time));
+        g_programs_built = g_programs_cached = g_programs_stored = g_programs_warmed = g_programs_refused = 0;
+        g_program_time = g_store_time = g_warm_time = {};
     }
     if (GlCallCountingEnabled())
     {
