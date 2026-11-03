@@ -25,6 +25,12 @@ public:
     // fastcall register arguments.
     uint32_t Ecx() const { return cpu_.Get(Gpr::kEcx); }
     uint32_t Edx() const { return cpu_.Get(Gpr::kEdx); }
+    // Further register arguments of LTCG functions, which pass parameters in
+    // any register (D3D8LTCG's <Name>_<n>__LTCG_<reg><param> variants).
+    uint32_t Eax() const { return cpu_.Get(Gpr::kEax); }
+    uint32_t Ebx() const { return cpu_.Get(Gpr::kEbx); }
+    uint32_t Esi() const { return cpu_.Get(Gpr::kEsi); }
+    uint32_t Edi() const { return cpu_.Get(Gpr::kEdi); }
 
     // Returns `value` in eax and pops the return address plus `stack_args`
     // stack arguments (stdcall; pass 0 for cdecl or register-only fastcall).
