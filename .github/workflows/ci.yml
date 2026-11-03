@@ -76,6 +76,8 @@ jobs:
             sudo dpkg --add-architecture i386
           fi
           sudo apt-get update
+          apt-cache policy libglib2.0-dev-bin libglib2.0-dev-bin-linux libglib2.0-dev libglib2.0-0t64 || true
+          dpkg -l | grep -i glib || true
           packages="ninja-build libasound2-dev libpulse-dev libx11-dev libxext-dev libxcursor-dev libxi-dev libxrandr-dev libxss-dev libxtst-dev libxfixes-dev libxkbcommon-dev libwayland-dev libdecor-0-dev libdrm-dev libgbm-dev libgl-dev libegl-dev"
           if [ "${{ matrix.arch }}" = "x86" ]; then
             i386=""
