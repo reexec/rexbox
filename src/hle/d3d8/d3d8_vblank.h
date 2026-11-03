@@ -45,6 +45,13 @@ void WaitForVerticalBlank();
 // (docs/design/20261021-i018-swap-queues-flip.md).
 void QueuePresent(uint32_t interval);
 
+// When the waits above would end if called now: the next vertical blank, and
+// the blank that shows the present queued last (now or earlier when
+// QueuePresent would not sleep). Idle work on the presenting thread stops
+// short of them (docs/design/20261103-i023-program-warmup.md).
+std::chrono::steady_clock::time_point NextVerticalBlankTime();
+std::chrono::steady_clock::time_point QueuedPresentTime();
+
 // Whether the clock is inside the vertical blank right now, and the scan
 // line it would be on (for D3DDevice_GetRasterStatus).
 void RasterPosition(bool* in_vblank, uint32_t* scan_line, uint32_t lines);

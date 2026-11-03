@@ -60,6 +60,9 @@ uint32_t g_programs_cached = 0;
 Clock::duration g_program_time{};
 uint32_t g_programs_stored = 0;
 Clock::duration g_store_time{};
+uint32_t g_programs_warmed = 0;
+uint32_t g_programs_refused = 0;
+Clock::duration g_warm_time{};
 uint64_t g_compare_bytes = 0;
 uint64_t g_compares_again = 0;
 uint32_t g_frames = 0;
@@ -237,6 +240,16 @@ void CountProgramStore(Clock::duration elapsed)
     g_store_time += elapsed;
 }
 
+void CountProgramWarm(bool made, Clock::duration elapsed)
+{
+    if (!Enabled() || !t_presenting)
+    {
+        return;
+    }
+    ++(made ? g_programs_warmed : g_programs_refused);
+    g_warm_time += elapsed;
+}
+
 void CountCompare(size_t bytes, bool again)
 {
     if (!Enabled() || !t_presenting)
@@ -375,15 +388,16 @@ void EndFrame(uint32_t frame)
         }
         std::fprintf(stderr, "%s\n", line.c_str());
     }
-    if (g_programs_built + g_programs_cached != 0)
+    if (g_programs_built + g_programs_cached + g_programs_warmed + g_programs_refused != 0)
     {
         // Programs made in this window (not per frame): they come in bursts.
         std::fprintf(stderr,
-                     "[d3d8 profile] programs: %u compiled, %u from the binary cache, %.1f ms in all; stored %u, %.1f ms\n",
+                     "[d3d8 profile] programs: %u compiled, %u from the binary cache, %.1f ms in all; stored %u, %.1f ms; "
+                     "warmed %u (%u refused), %.1f ms\n",
                      g_programs_built, g_programs_cached, Milliseconds(g_program_time), g_programs_stored,
-                     Milliseconds(g_store_time));
-        g_programs_built = g_programs_cached = g_programs_stored = 0;
-        g_program_time = g_store_time = {};
+                     Milliseconds(g_store_time), g_programs_warmed, g_programs_refused, Milliseconds(g_warm_time));
+        g_programs_built = g_programs_cached = g_programs_stored = g_programs_warmed = g_programs_refused = 0;
+        g_program_time = g_store_time = g_warm_time = {};
     }
     if (GlCallCountingEnabled())
     {

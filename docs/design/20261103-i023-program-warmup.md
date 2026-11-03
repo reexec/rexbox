@@ -1,6 +1,6 @@
 # 설계: 프로그램 캐시를 vblank 대기 시간에 미리 올린다 (issue #23, 2차)
 
-상태: 설계. 소비자: reexec/reCT3#20. 이전 설계: [i023 그리기 CPU 비용](20261021-i023-draw-cpu-cost.md). 프로그램 캐시: reJSRF 설계 i051(이 저장소로 옮기기 전, `d3d8_gl_program_cache.h` 머리 주석).
+상태: 구현됨([작업 로그 i023](../work-logs/20261021-i023-draw-cpu-cost.md) 2차). 소비자: reexec/reCT3#20. 이전 설계: [i023 그리기 CPU 비용](20261021-i023-draw-cpu-cost.md). 프로그램 캐시: reJSRF 설계 i051(이 저장소로 옮기기 전, `d3d8_gl_program_cache.h` 머리 주석).
 
 ## 1. 요구사항
 
@@ -22,10 +22,11 @@ Crazy Taxi 3 운전이 시작되는 몇 초 동안 50~120 ms 프레임이 몇 �
 
 ### 3.1 미리 올리기 (`d3d8_gl_program_cache.cpp`)
 
-* `WarmProgramCache(deadline)`: 처음 부를 때 캐시 디렉터리의 항목 목록을 만든다. 최근에 쓴 순서(파일 수정 시각 내림차순)로 정렬하고, 최대 `REXBOX_SHADER_WARM`개(기본 1024, 0이면 끔)만 둔다. 그 뒤 `deadline` 전까지 항목을 하나씩 읽어 프로그램을 만들고, 미리 올린 표에 둔다. 다음 항목이 끝나기 전에 `deadline`을 넘길 것 같으면 멈춘다(지금까지 가장 오래 걸린 항목 시간으로 추정).
+* 읽기 스레드: `WarmProgramCache`를 처음 부를 때 만든다. 캐시 디렉터리의 항목을 최근에 쓴 순서(파일 수정 시각 내림차순)로 정렬하고, 최대 `REXBOX_SHADER_WARM`개(기본 1024, 0이면 끔)만 둔다. 그 순서대로 파일을 읽고 확인해서 GL 스레드보다 최대 16개 앞서 둔다. 처음 실행에서 파일 읽기는 항목당 약 6 ms였다(디스크). 표시 스레드에서 읽으면 마감을 넘겨 부팅 프레임이 밀렸으므로, 읽기는 이 스레드가 한다.
+* `WarmProgramCache(deadline)`(GL 스레드): `deadline` 전까지 읽어 둔 항목을 하나씩 꺼내 `glProgramBinary`로 프로그램을 만들고, 미리 올린 표에 둔다. 다음 항목이 끝나기 전에 `deadline`을 넘길 것 같으면 멈춘다. 추정은 항목당 GL 시간의 이동 평균이다(새 값 가중치 1/8, 10 ms 상한). 드라이버의 첫 바이너리는 한 번 약 100 ms가 걸리므로, 최댓값으로 추정하면 그 뒤 아무것도 하지 못한다.
 * 미리 올린 표: 항목 이름(드라이버·소스 해시) → 프로그램과 소스 확인값. 확인값은 파일의 정점·조각 소스로 계산한 두 번째 해시(다른 시드)다. 드라이버가 다르거나 링크가 안 되는 항목은 건너뛴다.
 * `LoadCachedProgram`: 먼저 표에서 이름을 찾고, 확인값이 같으면 그 프로그램을 돌려주고 표에서 뺀다. 없으면 지금처럼 파일에서 읽는다.
-* 쓰인 항목(표에서 꺼냈거나 파일에서 읽음)은 파일 수정 시각을 지금으로 바꾼다. 그래서 다음 실행에서 앞에 온다. 쓰이지 않는 예전 항목은 뒤로 밀려 상한 밖으로 빠진다.
+* 쓰인 항목(표에서 꺼냈거나 파일에서 읽음)은 읽기 스레드가 파일 수정 시각을 지금으로 바꾼다(GL 스레드에서는 하나에 약 0.2 ms였다). 그래서 다음 실행에서 앞에 온다. 쓰이지 않는 예전 항목은 뒤로 밀려 상한 밖으로 빠진다. 미리 올리기를 끄면(읽기 스레드 없음) 시각도 바꾸지 않는다.
 
 ### 3.2 언제 (`d3d8_device.cpp`, `d3d8_vblank.*`)
 
@@ -63,7 +64,7 @@ sequenceDiagram
 
 # Design: warm the program cache in the vertical-blank wait (issue #23, second pass)
 
-Status: design. Consumer: reexec/reCT3#20. Earlier design: [i023 draw CPU cost](20261021-i023-draw-cpu-cost.md). Program cache: reJSRF design i051 (before the move to this repository; the head comment of `d3d8_gl_program_cache.h`).
+Status: implemented ([work log i023](../work-logs/20261021-i023-draw-cpu-cost.md), second pass). Consumer: reexec/reCT3#20. Earlier design: [i023 draw CPU cost](20261021-i023-draw-cpu-cost.md). Program cache: reJSRF design i051 (before the move to this repository; the head comment of `d3d8_gl_program_cache.h`).
 
 ## 1. Requirement
 
@@ -85,10 +86,11 @@ For a few seconds after Crazy Taxi 3 starts driving, a few frames take 50–120 
 
 ### 3.1 Warming (`d3d8_gl_program_cache.cpp`)
 
-* `WarmProgramCache(deadline)`: the first call lists the cache directory's entries, most recently used first (file modification time, descending), keeping at most `REXBOX_SHADER_WARM` (default 1024, 0 turns warming off). Until `deadline` it then reads entries one at a time, makes their programs and keeps them in a warm table. It stops when the next entry would likely end past `deadline` (estimated from the longest entry so far).
+* Reader thread, made by the first `WarmProgramCache`: it sorts the cache directory's entries most recently used first (file modification time, descending), keeps at most `REXBOX_SHADER_WARM` (default 1024, 0 turns warming off), and reads and checks the files in that order, up to 16 ahead of the GL thread. Reading took about 6 ms per entry on a first run (disk); on the presenting thread that overran the deadlines and pushed boot frames back, so this thread reads.
+* `WarmProgramCache(deadline)` (GL thread): until `deadline` it takes read entries one at a time, makes their programs with `glProgramBinary` and keeps them in a warm table. It stops when the next entry would likely end past `deadline`, estimated from a running average of an entry's GL time (new values weigh 1/8, capped at 10 ms); the driver's first binary takes some 100 ms once, so the longest so far would stop all further warming.
 * Warm table: entry name (the driver and source hash) → program and a source check, a second hash (another seed) of the file's vertex and fragment sources. Entries of another driver, or that do not link, are skipped.
 * `LoadCachedProgram` looks the name up first and, when the check matches, returns that program and removes it from the table; otherwise it reads the file as now.
-* A used entry (taken from the table or read from its file) has its file's modification time set to now, so the next run warms it early; unused old entries move back and fall past the limit.
+* A used entry (taken from the table or read from its file) has its file's modification time set to now by the reader thread (about 0.2 ms each on the GL thread), so the next run warms it early; unused old entries move back and fall past the limit. With warming off (no reader thread) times are not changed.
 
 ### 3.2 When (`d3d8_device.cpp`, `d3d8_vblank.*`)
 

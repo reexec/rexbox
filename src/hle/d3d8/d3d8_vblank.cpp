@@ -153,6 +153,17 @@ void QueuePresent(uint32_t interval)
     g_last_present.store(target);
 }
 
+Clock::time_point NextVerticalBlankTime()
+{
+    return TickTime(VerticalBlankCount() + 1);
+}
+
+Clock::time_point QueuedPresentTime()
+{
+    const uint64_t queued = g_last_present.load();
+    return VerticalBlankCount() < queued ? TickTime(queued) : Clock::now();
+}
+
 void RasterPosition(bool* in_vblank, uint32_t* scan_line, uint32_t lines)
 {
     const Clock::duration period = Period();

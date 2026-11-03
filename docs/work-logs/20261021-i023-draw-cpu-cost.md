@@ -41,6 +41,32 @@
 * 60 fps에는 렌더 스레드(설계 §3.2)가 필요하다.
 * `REXBOX_D3D8_PROFILE` 자체가 단계마다 `steady_clock::now`를 불러 프레임당 약 1 ms를 쓴다(QPC 표본 1.5%). 비교는 같은 조건이라 상쇄된다.
 
+## 2차 (2026-11-03, 브랜치 `i023-draw-cpu-cost-2`, v0.0.19 위로 rebase)
+
+기계: Ryzen 5 5600X, RTX 4090, Win32 x86 Release, 소비자 reCT3 v0.0.18. 이 기계에서 꾸준한 운전은 이미 60 fps다(그리기 단계 약 2.5 ms, `other` 약 2.4 ms).
+
+1. 진단 `REXBOX_D3D8_SLOW_FRAME`이 측정을 망쳤다. 긴 프레임마다 stderr에 한 줄을 썼고, 리디렉션된 파일로 쓰는 데 한 번에 7~35 ms가 들었다. 그 쓰기가 다음 프레임을 길게 만들어 60 fps 운전이 30 fps에 갇혔다(**확인됨**: 같은 exe로 보고 없음 59.8 fps, 보고 있음 29.8 fps). 보고를 모아 600프레임마다 쓰고, 그 쓰기로 길어진 프레임에는 표시를 붙였다(`b496593`). 보고에 프레임의 텍스처·프로그램 시간을 더했다(`515fa4b`).
+2. 그 결과 꾸준한 운전에는 긴 프레임이 없다. 600프레임마다 한 번 보이던 약 50 ms는 프로파일러가 보고를 쓰는 시간이다. 긴 프레임은 운전이 시작되는 몇 초에 몰린다. 텍스처 112개 15 ms(한 실행은 56 ms), 프로그램 25개 13 ms, 이어서 프로그램 22개 15 ms였다. 프로그램은 캐시에서 불러와도 하나에 1~2 ms가 든다.
+3. [설계 20261103-i023-program-warmup](../design/20261103-i023-program-warmup.md): 표시 스레드가 vblank를 기다리는 시간에 캐시의 프로그램을 미리 올린다. 파일 읽기와 파일 시각 갱신은 읽기 스레드가 한다. 첫 구현은 표시 스레드에서 파일을 읽었다. 첫 실행(디스크)에서 항목당 약 6 ms가 걸려 부팅 프레임 160개가 33 ms를 넘었고, 그 실행은 영상 구간에서 `indirect call to 00000000 (returns to 000C967E)`로 멈췄다. 읽기 스레드로 옮긴 뒤 여섯 번 실행에서 멈춤은 없었다.
+
+검증(같은 exe, `REXBOX_SHADER_WARM=0`과 번갈아 3쌍, 운전 진입):
+
+| | 켬 | 끔 |
+|---|---|---|
+| 장면 시작의 캐시 프로그램 74개 | 3.9~4.9 ms | 40~42 ms |
+| 운전 시작 최악 프레임 | 50~51 ms(한 실행은 텍스처 56 ms로 107 ms) | 58~61 ms |
+| 프로그램 22개 프레임(36~38 ms) | 없음 | 매번 |
+| 미리 올리기 | 1024개, GL 시간 약 230 ms(부팅 중 대기 시간) | 없음 |
+| 부팅 구간 | 59.1~59.3 fps, 33 ms 넘는 프레임 2~3개 | 같음 |
+
+* 빌드 경고 0(생성 코드의 기존 D9025 제외), reCT3 CTest 7/7.
+
+## 남은 것 (2차)
+
+* 운전 시작 프레임의 나머지: 텍스처 업로드(112개 15 ms, 가끔 56 ms)와 setup의 나머지 약 8 ms.
+* 카메라 도입부의 그리기 1000~1500개 프레임(그리기 단계 11~15 ms).
+* `000C967E`의 null 간접 호출은 미리 올리기로 부팅 타이밍이 흔들린 실행에서 한 번 나왔다. 원인은 모른다(reCT3 #18과 같은 계열로 **추정**).
+
 ---
 
 # Work log: the CPU cost of one D3D8 draw — first pass (issue #23)
@@ -77,3 +103,13 @@ Left over:
 * A steady 30 fps (the design's expectation) is not reached. Next candidates: the matrix and lighting work in constants, the VAO bind cost (skipped when the same range repeats), the remaining compares in `UniformCache::Changed`, and the driver's submission inside present (`ZwSetEvent`, 6% of samples).
 * 60 fps needs the render thread (design section 3.2).
 * `REXBOX_D3D8_PROFILE` itself calls `steady_clock::now` per phase, about 1 ms per frame (QPC 1.5% of samples); both builds pay it, so comparisons are unaffected.
+
+Second pass (2026-11-03, branch `i023-draw-cpu-cost-2` rebased onto v0.0.19; Ryzen 5 5600X, RTX 4090, Win32 x86 Release, consumer reCT3 v0.0.18, where steady driving already runs at 60 fps with about 2.5 ms of draw phases and 2.4 ms of `other`):
+
+1. The `REXBOX_D3D8_SLOW_FRAME` diagnostic spoiled the measurement: it wrote a line to stderr per long frame, each write to the redirected file took 7–35 ms and lengthened the next frame, holding 60 fps driving at 30 fps (**confirmed**: the same exe at 59.8 fps without reports, 29.8 with them). Reports are now held and written every 600 frames, with the frame that pays the write marked (`b496593`), and gain the frame's texture and program times (`515fa4b`).
+2. Steady driving then has no long frames; the ~50 ms frame every 600 is the profiler writing its report. Long frames gather in the first seconds of driving: 112 textures in 15 ms (56 ms in one run), 25 programs in 13 ms, then 22 programs in 15 ms; a program costs 1–2 ms even from the cache.
+3. [Design 20261103-i023-program-warmup](../design/20261103-i023-program-warmup.md): the presenting thread makes cached programs ahead in its vertical-blank wait, while a reader thread reads the files and updates file times. The first version read files on the presenting thread: on a first run (disk) an entry took about 6 ms, 160 boot frames went over 33 ms, and that run stopped in the movie with `indirect call to 00000000 (returns to 000C967E)`; after the move to a reader thread six runs had no stop.
+
+Verification (same exe, alternating with `REXBOX_SHADER_WARM=0`, three pairs into driving): the 74 cached programs at the scene start took 3.9–4.9 ms with warming against 40–42 ms without; the worst frame at the start of driving was 50–51 ms against 58–61 ms (one warmed run reached 107 ms on a 56 ms texture burst); the frame with 22 programs (36–38 ms) appeared in every run without warming and in none with it; warming made 1024 programs in about 230 ms of GL time during boot waits; the boot span ran at 59.1–59.3 fps with 2–3 frames over 33 ms either way. Build with no warnings (apart from the generated code's existing D9025), reCT3 CTest 7/7.
+
+Left over (second pass): the rest of the driving-start frame, texture uploads (112 in 15 ms, sometimes 56 ms) and about 8 ms more of setup; the camera-intro frames of 1000–1500 draws (11–15 ms of draw phases); the null indirect call at `000C967E`, seen once in a run whose boot timing warming disturbed, cause unknown (**inferred** to be of the same family as reCT3 #18).
