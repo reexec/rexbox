@@ -6,6 +6,13 @@
 // CreateDisplay (the guest's main thread). That is valid on Win32 and X11 or
 // Wayland; platforms that require the process main thread get a display
 // service later (docs/design/20261012-i007-d3d8-hle-first-batch.md section 2.5).
+//
+// Window calls that go through the window's message queue (its title, the
+// event pump) are made only on that thread (issue #62). On Win32 a title set
+// from another thread is a synchronous SendMessage that waits for the window's
+// thread, and a title's loading thread can present while the window's thread
+// waits on that loading thread: the present then never returns. A present on
+// another thread leaves its title pending for the window's thread.
 
 #include "rexbox/platform/display.h"
 
@@ -17,6 +24,8 @@
 #include <chrono>
 #include <cstdio>
 #include <mutex>
+#include <string>
+#include <thread>
 
 namespace rexbox::platform
 {
@@ -37,6 +46,12 @@ struct SdlDisplay
     // The title's FPS: presents counted over about a second.
     std::chrono::steady_clock::time_point fps_period_start;
     uint32_t fps_presents = 0;
+
+    // The thread that created the window and pumps its messages, and a title
+    // set on another thread, applied by the window's thread (issue #62).
+    std::thread::id window_thread;
+    std::string pending_title;
+    bool title_pending = false;
 };
 
 std::mutex g_mutex;
@@ -52,6 +67,37 @@ void SetError(std::string* error, const char* what)
         const char* detail = SDL_GetError();
         *error = std::string(what) + (detail != nullptr && detail[0] != '\0' ? std::string(": ") + detail : "");
     }
+}
+
+bool OnWindowThreadLocked()
+{
+    return g_display.window != nullptr && std::this_thread::get_id() == g_display.window_thread;
+}
+
+// Sets the window title on the window's thread, without the display mutex
+// held: SetWindowTextW and friends dispatch window messages, which can call
+// back into code that takes the mutex.
+void ApplyPendingTitle()
+{
+    SDL_Window* window = nullptr;
+    std::string title;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        if (!g_display.title_pending || !OnWindowThreadLocked())
+        {
+            return;
+        }
+        window = g_display.window;
+        title = std::move(g_display.pending_title);
+        g_display.title_pending = false;
+    }
+    SDL_SetWindowTitle(window, title.c_str());
+}
+
+void RequestTitleLocked(std::string title)
+{
+    g_display.pending_title = std::move(title);
+    g_display.title_pending = true;
 }
 
 std::string FullTitleLocked(const char* fallback, double frames_per_second)
@@ -116,6 +162,27 @@ void ToggleFullscreen(SDL_Window* window)
     }
     std::fprintf(stderr, "[display] %s\n", fullscreen ? "fullscreen (desktop resolution)" : "windowed");
 }
+
+// The frame rate in the title, once about a second has passed.
+void CountPresentLocked()
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (g_display.fps_presents == 0)
+    {
+        g_display.fps_period_start = now;
+    }
+    ++g_display.fps_presents;
+    const double seconds = std::chrono::duration<double>(now - g_display.fps_period_start).count();
+    if (seconds >= 1.0)
+    {
+        // Intervals between presents, so the first one only starts the period.
+        const double frames_per_second = static_cast<double>(g_display.fps_presents - 1) / seconds;
+        RequestTitleLocked(FullTitleLocked(nullptr, frames_per_second));
+        g_display.fps_period_start = now;
+        g_display.fps_presents = 1;
+    }
+}
+
 
 void ReleaseLocked()
 {
@@ -187,6 +254,8 @@ bool CreateDisplay(const DisplayConfig& config, std::string* error)
         return false;
     }
     g_display.hidden = config.hidden;
+    g_display.window_thread = std::this_thread::get_id();
+    g_display.title_pending = false;
     g_display.picture_width = config.width;
     g_display.picture_height = config.height;
     if (config.width != 0 && config.height != 0)
@@ -247,12 +316,16 @@ bool CreateDisplay(const DisplayConfig& config, std::string* error)
 
 void SetDisplayTitle(const std::string& title)
 {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    g_title = title;
-    if (g_display.window != nullptr)
     {
-        SDL_SetWindowTitle(g_display.window, FullTitleLocked(nullptr, 0.0).c_str());
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_title = title;
+        if (g_display.window == nullptr)
+        {
+            return;
+        }
+        RequestTitleLocked(FullTitleLocked(nullptr, 0.0));
     }
+    ApplyPendingTitle();
 }
 
 void DestroyDisplay()
@@ -285,10 +358,21 @@ void PumpDisplayEvents(bool* close_requested)
     uint32_t picture_height = 0;
     {
         std::lock_guard<std::mutex> lock(g_mutex);
+        // Only the window's thread receives its messages (and SDL expects its
+        // events pumped there); a present on another thread pumps nothing.
+        if (g_display.window != nullptr && !OnWindowThreadLocked())
+        {
+            if (close_requested != nullptr)
+            {
+                *close_requested = false;
+            }
+            return;
+        }
         window = g_display.window;
         picture_width = g_display.picture_width;
         picture_height = g_display.picture_height;
     }
+    ApplyPendingTitle();
     SDL_Event event;
     while (SDL_PollEvent(&event))
     {
@@ -520,22 +604,11 @@ void PresentDisplay()
     }
     SDL_GL_SwapWindow(window);
 
-    std::lock_guard<std::mutex> lock(g_mutex);
-    const auto now = std::chrono::steady_clock::now();
-    if (g_display.fps_presents == 0)
     {
-        g_display.fps_period_start = now;
+        std::lock_guard<std::mutex> lock(g_mutex);
+        CountPresentLocked();
     }
-    ++g_display.fps_presents;
-    const double seconds = std::chrono::duration<double>(now - g_display.fps_period_start).count();
-    if (seconds >= 1.0)
-    {
-        // Intervals between presents, so the first one only starts the period.
-        const double frames_per_second = static_cast<double>(g_display.fps_presents - 1) / seconds;
-        SDL_SetWindowTitle(g_display.window, FullTitleLocked(nullptr, frames_per_second).c_str());
-        g_display.fps_period_start = now;
-        g_display.fps_presents = 1;
-    }
+    ApplyPendingTitle();
 }
 
 void GetDisplayInfo(DisplayInfo* info)

@@ -30,6 +30,23 @@ std::string GlString(GlFunctions& gl, GLenum name)
     return text != nullptr ? std::string(text) : std::string();
 }
 
+// Reads back pending GL errors. A context reports each error once, so a few
+// reads empty the queue; a thread with no current context (a second guest
+// thread presenting, issue #64) or a lost context reports an error on every
+// read, so the reads stop after a bound. Returns whether the queue emptied.
+bool DrainGlErrors(GlFunctions& gl)
+{
+    constexpr int kMaxReads = 16;
+    for (int i = 0; i < kMaxReads; ++i)
+    {
+        if (gl.GetError() == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 }  // namespace
 
 void SetDisplayDefaults(const DisplayDefaults& defaults)
@@ -83,8 +100,9 @@ VideoMemoryInfo GetVideoMemoryInfo()
     // is read back here so it reaches no one else.
     GlFunctions& gl = Gl();
     const std::string vendor = GetRendererInfo().vendor;
-    while (gl.GetError() != 0)
+    if (!DrainGlErrors(gl))
     {
+        return info;  // no usable context on this thread: the driver figures stay unknown
     }
     if (vendor.find("NVIDIA") != std::string::npos)
     {
@@ -110,9 +128,7 @@ VideoMemoryInfo GetVideoMemoryInfo()
             info.driver_free = static_cast<uint64_t>(free_memory[0]) * 1024;
         }
     }
-    while (gl.GetError() != 0)
-    {
-    }
+    DrainGlErrors(gl);
     return info;
 }
 

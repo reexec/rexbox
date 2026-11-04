@@ -5,6 +5,9 @@
 
 #include "rexbox/runtime/thread_activity.h"
 
+#include <deque>
+#include <unordered_map>
+
 namespace rexbox::hle::kernel
 {
 
@@ -19,6 +22,19 @@ namespace L = layout;
 constexpr uint32_t kCsLockCount = 0x10;
 constexpr uint32_t kCsRecursionCount = 0x14;
 constexpr uint32_t kCsOwningThread = 0x18;
+
+// The threads waiting on each critical section, oldest first (issue #63). A
+// leaving owner hands the section to the first of them, as the console's
+// kernel does through LockCount and the section's event: a thread that
+// leaves and enters again in a loop cannot take it back from a waiter.
+// Guarded by KernelState::dispatcher.
+std::unordered_map<GuestAddress, std::deque<GuestAddress>> g_cs_waiters;
+
+bool HasWaitersLocked(GuestAddress cs)
+{
+    const auto it = g_cs_waiters.find(cs);
+    return it != g_cs_waiters.end() && !it->second.empty();
+}
 
 GuestAddress CurrentEthread()
 {
@@ -60,12 +76,25 @@ void RtlEnterCriticalSection()
         return;
     }
     memory.Write32(cs + kCsLockCount, memory.Read32(cs + kCsLockCount) + 1);
+    if (memory.Read32(cs + kCsRecursionCount) == 0 && !HasWaitersLocked(cs))
+    {
+        memory.Write32(cs + kCsOwningThread, self);
+        memory.Write32(cs + kCsRecursionCount, 1);
+        lock.unlock();
+        call.Return(0, 1);
+        return;
+    }
+    // Owned (or promised to an earlier waiter): queue, and wait until a
+    // leaving owner makes this thread the owner.
+    g_cs_waiters[cs].push_back(self);
+    const auto handed = [&] {
+        return memory.Read32(cs + kCsOwningThread) == self && memory.Read32(cs + kCsRecursionCount) != 0;
+    };
     // A wait this long is a deadlock in practice; report the section once so
     // the owner can be identified (diagnostic, no behavior change).
     bool reported = false;
     const runtime::ScopedWait note("RtlEnterCriticalSection", &cs, 1, false, -1);
-    while (!state.signalled.wait_for(lock, std::chrono::seconds(5),
-                                     [&] { return memory.Read32(cs + kCsRecursionCount) == 0; }))
+    while (!state.signalled.wait_for(lock, std::chrono::seconds(5), handed))
     {
         if (!reported)
         {
@@ -77,8 +106,6 @@ void RtlEnterCriticalSection()
                          static_cast<int32_t>(memory.Read32(cs + kCsLockCount)));
         }
     }
-    memory.Write32(cs + kCsOwningThread, self);
-    memory.Write32(cs + kCsRecursionCount, 1);
     lock.unlock();
     call.Return(0, 1);
 }
@@ -92,7 +119,7 @@ void RtlTryEnterCriticalSection()
     runtime::GuestMemory& memory = Memory();
     std::lock_guard<std::mutex> lock(State().dispatcher);
     const uint32_t recursion = memory.Read32(cs + kCsRecursionCount);
-    if (recursion != 0 && memory.Read32(cs + kCsOwningThread) != self)
+    if ((recursion != 0 && memory.Read32(cs + kCsOwningThread) != self) || (recursion == 0 && HasWaitersLocked(cs)))
     {
         call.Return(0, 1);
         return;
@@ -115,8 +142,20 @@ void RtlLeaveCriticalSection()
         memory.Write32(cs + kCsLockCount, memory.Read32(cs + kCsLockCount) - 1);
         if (recursion <= 1)
         {
-            memory.Write32(cs + kCsRecursionCount, 0);
-            memory.Write32(cs + kCsOwningThread, 0);
+            // The first waiter, if any, owns the section from here on.
+            GuestAddress next = 0;
+            const auto it = g_cs_waiters.find(cs);
+            if (it != g_cs_waiters.end() && !it->second.empty())
+            {
+                next = it->second.front();
+                it->second.pop_front();
+                if (it->second.empty())
+                {
+                    g_cs_waiters.erase(it);
+                }
+            }
+            memory.Write32(cs + kCsRecursionCount, next != 0 ? 1 : 0);
+            memory.Write32(cs + kCsOwningThread, next);
             State().signalled.notify_all();
         }
         else
