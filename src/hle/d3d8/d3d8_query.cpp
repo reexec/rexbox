@@ -185,11 +185,17 @@ void D3DDevice_PersistDisplay()
 }
 
 // void D3D_DestroyResource(D3DResource* = edi) (`_0__LTCG_edi1`): the
-// library frees a resource whose last reference went; the HLE frees nothing
-// a resource's own memory belongs to the title's allocator.
+// library frees a resource whose last reference went, through the title's
+// allocator (XMemFree of the data and the header). The HLE drops its host
+// state and runs that original body (issue #67); before, it freed nothing and
+// a title that recycles textures ran out of guest memory.
 void D3D_DestroyResource_0__LTCG_edi1()
 {
     HleCall call;
+    if (DestroyResourceHostSide(call.Edi()) && runtime::RunLiftedOriginal())
+    {
+        return;  // the original returned to the caller
+    }
     call.Return(call.Eax(), 0);
 }
 

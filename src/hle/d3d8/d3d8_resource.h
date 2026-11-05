@@ -164,6 +164,14 @@ void AddResourceBinding(GuestAddress resource);
 void ReleaseResourceBinding(GuestAddress resource);
 void ReleaseResourceBinding(GuestAddress resource, uint32_t lock_value);
 
+// D3D_DestroyResource for a resource whose last reference went (issue #67).
+// One the HLE made (or the device holds) is destroyed here and false comes
+// back; for one the title made (its header and data from the title's
+// allocator), only the host state goes (host texture, render-target memory,
+// the record) and true comes back: the library's own body must then free the
+// memory, as only it knows the allocator.
+bool DestroyResourceHostSide(GuestAddress resource);
+
 void RegisterResourceExports(runtime::HleRegistry& registry);
 
 }  // namespace rexbox::hle::d3d8

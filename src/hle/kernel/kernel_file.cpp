@@ -548,6 +548,37 @@ void NtQueryInformationFile()
     call.Return(kStatusSuccess, 5);
 }
 
+// NTSTATUS NtQueryFullAttributesFile(POBJECT_ATTRIBUTES ObjectAttributes,
+//     PFILE_NETWORK_OPEN_INFORMATION FileInformation)
+// The attributes of a file or directory by name, without a handle (issue #69):
+// the same FILE_NETWORK_OPEN_INFORMATION as NtQueryInformationFile class 34.
+void NtQueryFullAttributesFile()
+{
+    HleCall call;
+    const GuestAddress info = call.Arg(1);
+    const std::string name = ObjectName(call.Arg(0));
+    const std::optional<VfsPath> resolved = VfsResolve(name);
+    if (!resolved || resolved->raw_device)
+    {
+        call.Return(kStatusObjectPathNotFound, 2);
+        return;
+    }
+    std::error_code ec;
+    const fs::path& host = resolved->host_path;
+    if (!fs::exists(host, ec))
+    {
+        call.Return(fs::exists(host.parent_path(), ec) ? kStatusObjectNameNotFound : kStatusObjectPathNotFound, 2);
+        return;
+    }
+    const bool directory = fs::is_directory(host, ec);
+    const uint64_t size = directory ? 0 : static_cast<uint64_t>(fs::file_size(host, ec));
+    WriteTimes(info, host);
+    Write64(info + 0x20, (size + 0xFFF) & ~0xFFFull);
+    Write64(info + 0x28, size);
+    Memory().Write32(info + 0x30, AttributesOf(host, resolved->read_only));
+    call.Return(kStatusSuccess, 2);
+}
+
 // The Xbox file system ignores case, and so does the VFS.
 bool SameHostFile(const fs::path& a, const fs::path& b)
 {
@@ -1085,6 +1116,7 @@ void RegisterFileExports(runtime::HleRegistry& registry)
     registry.AddExport("kernel", "NtWriteFile", &NtWriteFile);
     registry.AddExport("kernel", "NtFlushBuffersFile", &NtFlushBuffersFile);
     registry.AddExport("kernel", "NtQueryInformationFile", &NtQueryInformationFile);
+    registry.AddExport("kernel", "NtQueryFullAttributesFile", &NtQueryFullAttributesFile);
     registry.AddExport("kernel", "NtSetInformationFile", &NtSetInformationFile);
     registry.AddExport("kernel", "NtQueryVolumeInformationFile", &NtQueryVolumeInformationFile);
     registry.AddExport("kernel", "NtQueryDirectoryFile", &NtQueryDirectoryFile);

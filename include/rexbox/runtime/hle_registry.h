@@ -82,6 +82,17 @@ private:
     std::unordered_map<std::string, GuestAddress> variables_;
 };
 
+// Running the lifted original of the XDK function whose HLE export is
+// executing on this thread (issue #67), for an export that only adds host work
+// around what the library does itself (D3D_DestroyResource frees through the
+// title's allocator). The original runs on the guest state as the export found
+// it and returns to the guest caller itself, so the export must not Return
+// afterwards. False, with nothing run, when there is no original: the export
+// was reached without a generated override (an indirect call, a probe).
+using LiftedOriginalRunner = bool (*)();
+void SetLiftedOriginalRunner(LiftedOriginalRunner runner);
+bool RunLiftedOriginal();
+
 }  // namespace rexbox::runtime
 
 #endif  // REXBOX_RUNTIME_HLE_REGISTRY_H
