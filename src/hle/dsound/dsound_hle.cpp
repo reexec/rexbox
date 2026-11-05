@@ -66,6 +66,11 @@ void RegisterDsoundHle(runtime::HleRegistry& registry)
     }
     const char* trace = std::getenv("REXBOX_DSOUND_TRACE");
     state.trace = trace != nullptr && trace[0] != '\0' && std::strcmp(trace, "0") != 0;
+    const char* dump = std::getenv("REXBOX_AUDIO_DUMP");
+    if (dump != nullptr)
+    {
+        state.dump_path = dump;
+    }
     RegisterDeviceExports(registry);
     RegisterBufferExports(registry);
     RegisterEffectsExports(registry);

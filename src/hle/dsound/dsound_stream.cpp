@@ -105,6 +105,8 @@ struct Stream
     uint64_t discontinuities = 0;
     uint64_t pause_calls = 0;
     std::chrono::steady_clock::time_point last_delivery{};
+    float peak_raw = 0.0f;
+    float peak_out = 0.0f;
 };
 
 std::unordered_map<GuestAddress, Stream> g_streams;  // guarded by State().mutex
@@ -150,6 +152,7 @@ void MixStream(Stream& stream, float* samples, uint32_t frames)
     {
         return;
     }
+    const bool trace = State().trace;
     const uint32_t rate = stream.frequency != 0 ? stream.frequency : stream.format.rate;
     const double step = static_cast<double>(rate) / static_cast<double>(kOutputRate);
     const uint32_t channels = stream.format.channels;
@@ -180,8 +183,17 @@ void MixStream(Stream& stream, float* samples, uint32_t frames)
                 left = SampleOf(packet, stream, frame, 0);
                 right = SampleOf(packet, stream, frame, 1);
             }
-            samples[2 * i] += left * gain;
-            samples[2 * i + 1] += right * gain;
+            const float out_left = left * gain;
+            const float out_right = right * gain;
+            if (trace)
+            {
+                const float raw_abs = std::max(std::fabs(left), std::fabs(right));
+                const float out_abs = std::max(std::fabs(out_left), std::fabs(out_right));
+                stream.peak_raw = std::max(stream.peak_raw, raw_abs);
+                stream.peak_out = std::max(stream.peak_out, out_abs);
+            }
+            samples[2 * i] += out_left;
+            samples[2 * i + 1] += out_right;
             stream.position += step;
             ++i;
         }
@@ -678,17 +690,23 @@ void MixStreamsLocked(float* samples, uint32_t frames)
     {
         MixStream(entry.second, samples, frames);
     }
-    if (!State().trace || g_streams.empty())
+    DsoundState& state = State();
+    if (!state.trace || (g_streams.empty() && state.buffers.empty()))
     {
         return;
     }
     const auto now = std::chrono::steady_clock::now();
-    if (g_last_report.time_since_epoch().count() != 0 && now - g_last_report < kReportInterval)
+    if (g_last_report.time_since_epoch().count() == 0)
+    {
+        g_last_report = now;
+        return;
+    }
+    if (now - g_last_report < kReportInterval)
     {
         return;
     }
     g_last_report = now;
-    for (const auto& [pointer, stream] : g_streams)
+    for (auto& [pointer, stream] : g_streams)
     {
         uint32_t done_count = 0;
         for (const Packet& packet : stream.packets)
@@ -711,7 +729,7 @@ void MixStreamsLocked(float* samples, uint32_t frames)
         std::fprintf(stderr,
                      "[dsound] stream %08X: submitted %llu (%llu bytes), mixed %llu, completed %llu, queued %zu (%u "
                      "done), starved %llu, paused-mixes %llu, flushes %llu, discontinuities %llu, pauses %llu (now "
-                     "%s), last delivery %s\n",
+                     "%s), last delivery %s, peak raw %.3f out %.3f, volume %d, headroom %u\n",
                      pointer, static_cast<unsigned long long>(stream.submitted),
                      static_cast<unsigned long long>(stream.submitted_bytes),
                      static_cast<unsigned long long>(stream.mixed_out),
@@ -721,8 +739,14 @@ void MixStreamsLocked(float* samples, uint32_t frames)
                      static_cast<unsigned long long>(stream.flushes),
                      static_cast<unsigned long long>(stream.discontinuities),
                      static_cast<unsigned long long>(stream.pause_calls), stream.paused ? "paused" : "playing",
-                     delivery);
+                     delivery, stream.peak_raw, stream.peak_out, stream.volume, stream.headroom);
+        stream.peak_raw = 0.0f;
+        stream.peak_out = 0.0f;
     }
+    std::fprintf(stderr, "[dsound] output: peak %.3f, buffers playing %u (max), streams %zu\n", state.output_peak,
+                 state.max_playing_buffers, g_streams.size());
+    state.output_peak = 0.0f;
+    state.max_playing_buffers = 0;
 }
 
 bool StreamStatsForTest(GuestAddress pointer, StreamStats* stats)
@@ -753,6 +777,10 @@ bool StreamStatsForTest(GuestAddress pointer, StreamStats* stats)
     }
     stats->paused = stream->paused;
     stats->has_delivery = stream->last_delivery.time_since_epoch().count() != 0;
+    stats->peak_raw = stream->peak_raw;
+    stats->peak_out = stream->peak_out;
+    stats->volume = stream->volume;
+    stats->headroom = stream->headroom;
     return true;
 }
 

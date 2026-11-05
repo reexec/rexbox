@@ -8,7 +8,10 @@
 #include "rexbox/runtime/thread_activity.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <system_error>
@@ -337,18 +340,183 @@ void MixBuffer(GuestAddress key, Buffer& buffer, float* samples, uint32_t frames
     buffer.position = position;
 }
 
+// Output WAV dump (design i072): opened in StartOutputLocked, written on the
+// audio thread in RenderOutput.
+std::FILE* g_dump_file = nullptr;
+uint64_t g_dump_bytes = 0;
+uint64_t g_dump_last_header_bytes = 0;
+bool g_dump_error_reported = false;
+
+constexpr uint32_t kWavHeaderBytes = 44;
+constexpr uint64_t kDumpHeaderRefreshBytes = static_cast<uint64_t>(kOutputRate) * 4;  // 1 second of stereo 16-bit PCM
+
+void WriteLe16(uint8_t* out, uint16_t value)
+{
+    out[0] = static_cast<uint8_t>(value & 0xFF);
+    out[1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+}
+
+void WriteLe32(uint8_t* out, uint32_t value)
+{
+    out[0] = static_cast<uint8_t>(value & 0xFF);
+    out[1] = static_cast<uint8_t>((value >> 8) & 0xFF);
+    out[2] = static_cast<uint8_t>((value >> 16) & 0xFF);
+    out[3] = static_cast<uint8_t>((value >> 24) & 0xFF);
+}
+
+void BuildWavHeader(uint32_t data_bytes, uint8_t header[kWavHeaderBytes])
+{
+    constexpr uint16_t kChannels = 2;
+    constexpr uint16_t kBits = 16;
+    constexpr uint16_t kBlockAlign = kChannels * (kBits / 8);
+    constexpr uint32_t kByteRate = kOutputRate * kBlockAlign;
+    const uint32_t riff_size = data_bytes > 0xFFFFFFFFu - 36u ? 0xFFFFFFFFu : data_bytes + 36u;
+    std::memcpy(header + 0, "RIFF", 4);
+    WriteLe32(header + 4, riff_size);
+    std::memcpy(header + 8, "WAVE", 4);
+    std::memcpy(header + 12, "fmt ", 4);
+    WriteLe32(header + 16, 16);
+    WriteLe16(header + 20, kFormatPcm);
+    WriteLe16(header + 22, kChannels);
+    WriteLe32(header + 24, kOutputRate);
+    WriteLe32(header + 28, kByteRate);
+    WriteLe16(header + 32, kBlockAlign);
+    WriteLe16(header + 34, kBits);
+    std::memcpy(header + 36, "data", 4);
+    WriteLe32(header + 40, data_bytes);
+}
+
+void FailDump(const char* detail)
+{
+    if (!g_dump_error_reported)
+    {
+        g_dump_error_reported = true;
+        std::fprintf(stderr, "[dsound] audio dump write failed (%s); turning dump off\n", detail);
+    }
+    if (g_dump_file != nullptr)
+    {
+        std::fclose(g_dump_file);
+        g_dump_file = nullptr;
+    }
+}
+
+void OpenDumpFile(const std::string& path)
+{
+    if (path.empty())
+    {
+        return;
+    }
+    if (g_dump_file != nullptr)
+    {
+        std::fclose(g_dump_file);
+        g_dump_file = nullptr;
+    }
+    g_dump_error_reported = false;
+    g_dump_file = std::fopen(path.c_str(), "wb");
+    if (g_dump_file == nullptr)
+    {
+        std::fprintf(stderr, "[dsound] cannot open REXBOX_AUDIO_DUMP '%s': %s\n", path.c_str(), std::strerror(errno));
+        g_dump_error_reported = true;
+        return;
+    }
+    uint8_t header[kWavHeaderBytes];
+    BuildWavHeader(0, header);
+    if (std::fwrite(header, 1, kWavHeaderBytes, g_dump_file) != kWavHeaderBytes || std::fflush(g_dump_file) != 0)
+    {
+        FailDump(std::strerror(errno));
+        return;
+    }
+    g_dump_bytes = 0;
+    g_dump_last_header_bytes = 0;
+    std::fprintf(stderr, "[dsound] audio dump: %s (%u Hz stereo 16-bit PCM)\n", path.c_str(), kOutputRate);
+}
+
+bool RewriteDumpHeader()
+{
+    if (g_dump_file == nullptr)
+    {
+        return false;
+    }
+    const uint32_t clamped_bytes =
+        g_dump_bytes > 0xFFFFFFFFull - 36u ? 0xFFFFFFFFu - 36u : static_cast<uint32_t>(g_dump_bytes);
+    uint8_t header[kWavHeaderBytes];
+    BuildWavHeader(clamped_bytes, header);
+    if (std::fseek(g_dump_file, 0, SEEK_SET) != 0 ||
+        std::fwrite(header, 1, kWavHeaderBytes, g_dump_file) != kWavHeaderBytes ||
+        std::fseek(g_dump_file, 0, SEEK_END) != 0 || std::fflush(g_dump_file) != 0)
+    {
+        FailDump(std::strerror(errno));
+        return false;
+    }
+    g_dump_last_header_bytes = g_dump_bytes;
+    return true;
+}
+
+void WriteDumpSamples(const float* samples, uint32_t frames)
+{
+    if (g_dump_file == nullptr || frames == 0)
+    {
+        return;
+    }
+    thread_local std::vector<uint8_t> pcm;
+    const size_t count = static_cast<size_t>(frames) * 2;
+    pcm.resize(count * 2);
+    for (size_t i = 0; i < count; ++i)
+    {
+        const int32_t scaled = static_cast<int32_t>(std::lrint(samples[i] * 32767.0f));
+        const auto s16 = static_cast<int16_t>(std::clamp(scaled, -32768, 32767));
+        WriteLe16(pcm.data() + i * 2, static_cast<uint16_t>(s16));
+    }
+    if (std::fwrite(pcm.data(), 1, pcm.size(), g_dump_file) != pcm.size())
+    {
+        FailDump(std::strerror(errno));
+        return;
+    }
+    g_dump_bytes += pcm.size();
+    if (g_dump_bytes - g_dump_last_header_bytes >= kDumpHeaderRefreshBytes)
+    {
+        RewriteDumpHeader();
+    }
+}
+
 void RenderOutput(float* samples, uint32_t frames, void* /*context*/)
 {
     std::memset(samples, 0, sizeof(float) * 2 * frames);
+    bool trace = false;
     {
         DsoundState& state = State();
         std::lock_guard<std::mutex> lock(state.mutex);
+        trace = state.trace;
+        if (trace)
+        {
+            uint32_t playing = 0;
+            for (const auto& entry : state.buffers)
+            {
+                if (entry.second.playing)
+                {
+                    ++playing;
+                }
+            }
+            state.max_playing_buffers = std::max(state.max_playing_buffers, playing);
+        }
         MixLocked(samples, frames);
     }
+    float peak = 0.0f;
     for (uint32_t i = 0; i < 2 * frames; ++i)
     {
+        if (trace)
+        {
+            peak = std::max(peak, std::fabs(samples[i]));
+        }
         samples[i] = std::clamp(samples[i], -1.0f, 1.0f);
     }
+    if (trace)
+    {
+        DsoundState& state = State();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.output_peak = std::max(state.output_peak, peak);
+    }
+    WriteDumpSamples(samples, frames);
 }
 
 }  // namespace
@@ -434,6 +602,20 @@ void MixLocked(float* samples, uint32_t frames)
     MixStreamsLocked(samples, frames);
 }
 
+bool WriteWavDumpForTest(const char* path, const float* samples, uint32_t frames)
+{
+    OpenDumpFile(path != nullptr ? path : "");
+    if (g_dump_file == nullptr)
+    {
+        return false;
+    }
+    WriteDumpSamples(samples, frames);
+    const bool ok = RewriteDumpHeader();
+    std::fclose(g_dump_file);
+    g_dump_file = nullptr;
+    return ok;
+}
+
 void StartOutputLocked()
 {
     DsoundState& state = State();
@@ -442,6 +624,7 @@ void StartOutputLocked()
         return;
     }
     state.output_started = true;
+    OpenDumpFile(state.dump_path);
     platform::AudioOutputConfig config;
     config.sample_rate = kOutputRate;
     config.null_device = state.output == DsoundOutput::kNull;

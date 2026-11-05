@@ -674,6 +674,62 @@ void ProbeStreamStats()
               stats.discontinuities == 1 && stats.flushes == 1,
           "Pause, paused mix, Discontinuity and Flush counters");
 
+    // Signal levels (issue #72): collected with tracing on; volume -600 halves peak_out.
+    rexbox::hle::dsound::State().trace = true;
+    Fill16(kData, 64, 16384);
+    Call("DSStream_Process", {stream, pkt1, 0});
+    Render(32);
+    Call("DirectSoundDoWork", {});
+    Check(StreamStatsForTest(stream, &stats) && std::fabs(stats.peak_raw - 0.5f) < 0.01f &&
+              std::fabs(stats.peak_out - 0.5f) < 0.01f,
+          "stream signal levels: amplitude 0.5 at volume 0 gives peak_raw 0.5 and peak_out 0.5");
+
+    Call("IDirectSoundStream_SetVolume", {stream, static_cast<uint32_t>(-600)});
+    // Reset peaks by recreating or reading after a fresh stream; here we create a second stream to test -600 cleanly.
+    const GuestAddress stream2 = [&]
+    {
+        g_memory->Write32(kOut, 0);
+        Call("DirectSoundCreateStream", {kDesc, kOut});
+        return Read32(kOut);
+    }();
+    Call("IDirectSoundStream_SetVolume", {stream2, static_cast<uint32_t>(-600)});
+    Call("DSStream_Process", {stream2, pkt1, 0});
+    Render(32);
+    Call("DirectSoundDoWork", {});
+    const float expected_out = 0.5f * std::pow(10.0f, -600.0f / 2000.0f);
+    Check(StreamStatsForTest(stream2, &stats) && std::fabs(stats.peak_raw - 0.5f) < 0.01f &&
+              std::fabs(stats.peak_out - expected_out) < 0.01f && stats.volume == -600,
+          "stream signal levels: volume -600 lowers peak_out by 6 dB while peak_raw stays 0.5");
+    Call("DSStream_Release", {stream2});
+    rexbox::hle::dsound::State().trace = false;
+
+    // WAV dump for REXBOX_AUDIO_DUMP (issue #72): write a short file and check its RIFF header (48000 Hz, 2 ch, 16-bit PCM).
+    const char* wav_path = "dsound_probe_test.wav";
+    const float test_samples[8] = {0.5f, -0.5f, 0.25f, -0.25f, 0.0f, 0.0f, 1.0f, -1.0f};
+    const bool wrote = rexbox::hle::dsound::WriteWavDumpForTest(wav_path, test_samples, 4);
+    uint8_t wav[60] = {};
+    size_t wav_read = 0;
+    if (std::FILE* f = std::fopen(wav_path, "rb"))
+    {
+        wav_read = std::fread(wav, 1, sizeof(wav), f);
+        std::fclose(f);
+    }
+    std::remove(wav_path);
+    const auto le16 = [&](size_t off) -> uint16_t
+    {
+        return static_cast<uint16_t>(wav[off] | (wav[off + 1] << 8));
+    };
+    const auto le32 = [&](size_t off) -> uint32_t
+    {
+        return static_cast<uint32_t>(wav[off]) | (static_cast<uint32_t>(wav[off + 1]) << 8) |
+               (static_cast<uint32_t>(wav[off + 2]) << 16) | (static_cast<uint32_t>(wav[off + 3]) << 24);
+    };
+    Check(wrote && wav_read == 44 + 16 && std::memcmp(wav + 0, "RIFF", 4) == 0 && le32(4) == 16u + 36u &&
+              std::memcmp(wav + 8, "WAVE", 4) == 0 && std::memcmp(wav + 12, "fmt ", 4) == 0 && le32(16) == 16 &&
+              le16(20) == 1 && le16(22) == 2 && le32(24) == 48000 && le32(28) == 192000 && le16(32) == 4 &&
+              le16(34) == 16 && std::memcmp(wav + 36, "data", 4) == 0 && le32(40) == 16,
+          "REXBOX_AUDIO_DUMP writes a short WAV file with a valid 48000 Hz 2 ch 16-bit RIFF header");
+
     Check(Call("DSStream_Release", {stream}) == 0 && !StreamStatsForTest(stream, &stats),
           "DSStream_Release destroys the stream");
 }
