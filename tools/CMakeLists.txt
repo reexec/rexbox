@@ -22,9 +22,11 @@ if(MSVC)
 endif()
 rexbox_strict_warnings(rexbox_kernel_probe)
 
-# DSOUND HLE checks that need no game data (run in CI).
+# DSOUND HLE checks that need no game data (run in CI). White-box: includes the
+# module's own headers for stream diagnostics.
 add_executable(rexbox_dsound_probe dsound_probe/main.cpp)
 target_link_libraries(rexbox_dsound_probe PRIVATE rexbox_hle_dsound)
+target_include_directories(rexbox_dsound_probe PRIVATE ${rexbox_SOURCE_DIR}/src/hle/dsound)
 rexbox_strict_warnings(rexbox_dsound_probe)
 
 # D3D8 HLE checks of the pure parts (texture formats, FVF, fixed-function

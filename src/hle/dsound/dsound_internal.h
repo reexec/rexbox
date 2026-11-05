@@ -294,6 +294,26 @@ void MixLocked(float* samples, uint32_t frames);
 void MixStreamsLocked(float* samples, uint32_t frames);
 void DeliverStreamCompletions();
 
+// Per-stream packet statistics (design i071), read by the probe.
+struct StreamStats
+{
+    uint64_t submitted = 0;
+    uint64_t submitted_bytes = 0;
+    uint64_t mixed_out = 0;
+    uint64_t completed = 0;
+    uint64_t starved_mixes = 0;
+    uint64_t paused_mixes = 0;
+    uint64_t flushes = 0;
+    uint64_t discontinuities = 0;
+    uint64_t pause_calls = 0;
+    uint32_t queued = 0;
+    uint32_t done_queued = 0;
+    bool paused = false;
+    bool has_delivery = false;
+};
+
+bool StreamStatsForTest(GuestAddress pointer, StreamStats* stats);
+
 void RegisterDeviceExports(runtime::HleRegistry& registry);
 void RegisterBufferExports(runtime::HleRegistry& registry);
 void RegisterEffectsExports(runtime::HleRegistry& registry);

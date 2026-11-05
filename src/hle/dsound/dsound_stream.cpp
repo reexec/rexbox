@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <deque>
 #include <iterator>
@@ -54,6 +55,9 @@ constexpr uint32_t kPacketFlushed = 0x80004004;  // E_ABORT
 constexpr uint32_t kStatusAcceptInput = 0x1;
 // XMO_STREAMF_* in XMEDIAINFO.dwFlags: whole packets, any size.
 constexpr uint32_t kInfoFlags = 0x0;
+// Trace diagnostics (design i071).
+constexpr uint64_t kMaxLoggedCalls = 8;
+constexpr std::chrono::seconds kReportInterval{5};
 
 // The vtable's synthetic code addresses (rexbox/runtime/kernel_thunks.h).
 constexpr GuestAddress kMethodVaBase = runtime::kHleMethodVaBase;
@@ -89,9 +93,22 @@ struct Stream
     uint32_t frequency = 0; // SetFrequency/SetPitch; 0: the format's rate
     double position = 0.0;  // fractional frame within the front packet
     std::deque<Packet> packets;
+
+    // Packet statistics (design i071).
+    uint64_t submitted = 0;
+    uint64_t submitted_bytes = 0;
+    uint64_t mixed_out = 0;
+    uint64_t completed = 0;
+    uint64_t starved_mixes = 0;
+    uint64_t paused_mixes = 0;
+    uint64_t flushes = 0;
+    uint64_t discontinuities = 0;
+    uint64_t pause_calls = 0;
+    std::chrono::steady_clock::time_point last_delivery{};
 };
 
 std::unordered_map<GuestAddress, Stream> g_streams;  // guarded by State().mutex
+std::chrono::steady_clock::time_point g_last_report{};
 GuestAddress g_vtable = 0;
 
 Stream* FindStream(GuestAddress pointer)
@@ -124,7 +141,12 @@ float SampleOf(const Packet& packet, const Stream& stream, uint32_t frame, uint3
 // Plays the front packets into `samples`; the mixer holds the mutex.
 void MixStream(Stream& stream, float* samples, uint32_t frames)
 {
-    if (stream.paused || !stream.valid_format)
+    if (stream.paused)
+    {
+        ++stream.paused_mixes;
+        return;
+    }
+    if (!stream.valid_format)
     {
         return;
     }
@@ -171,6 +193,7 @@ void MixStream(Stream& stream, float* samples, uint32_t frames)
         }
         packet.consumed = packet.bytes;
         packet.done = true;
+        ++stream.mixed_out;
         stream.position -= static_cast<double>(packet_frames);
         if (i >= frames)
         {
@@ -178,6 +201,10 @@ void MixStream(Stream& stream, float* samples, uint32_t frames)
         }
     }
     // Starved: no packet left to play (the remaining output stays silent).
+    if (i < frames)
+    {
+        ++stream.starved_mixes;
+    }
     stream.position = 0.0;
 }
 
@@ -222,6 +249,7 @@ void DeliverCompletions()
     std::vector<Completion> completions;
     {
         std::lock_guard<std::mutex> lock(State().mutex);
+        const auto now = std::chrono::steady_clock::now();
         for (auto& [pointer, stream] : g_streams)
         {
             while (!stream.packets.empty() && stream.packets.front().done)
@@ -230,6 +258,8 @@ void DeliverCompletions()
                 completions.push_back({packet.completed_size, packet.status, packet.consumed, packet.result,
                                        packet.event_or_context, stream.callback, stream.context});
                 stream.packets.pop_front();
+                ++stream.completed;
+                stream.last_delivery = now;
             }
         }
     }
@@ -417,6 +447,7 @@ void DSStream_Process()
 {
     HleCall call;
     DeliverCompletions();
+    const GuestAddress pointer = call.Arg(0);
     const GuestAddress input = call.Arg(1);
     if (input == 0)
     {
@@ -439,8 +470,9 @@ void DSStream_Process()
     {
         memory.Write32(packet.completed_size, 0);
     }
-    std::lock_guard<std::mutex> lock(State().mutex);
-    Stream* stream = FindStream(call.Arg(0));
+    DsoundState& state = State();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    Stream* stream = FindStream(pointer);
     if (stream == nullptr)
     {
         call.Return(kErrInvalidCall, 3);
@@ -451,6 +483,15 @@ void DSStream_Process()
         packet.done = true;  // completed at once, nothing played
     }
     stream->packets.push_back(packet);
+    ++stream->submitted;
+    stream->submitted_bytes += packet.bytes;
+    if (state.trace && stream->submitted <= kMaxLoggedCalls)
+    {
+        std::fprintf(stderr,
+                     "[dsound] stream %08X Process #%llu: buffer %08X, %u bytes, event/context %08X (queued %zu)\n",
+                     pointer, static_cast<unsigned long long>(stream->submitted), packet.buffer, packet.bytes,
+                     packet.event_or_context, stream->packets.size());
+    }
     call.Return(kDsOk, 3);
 }
 
@@ -459,6 +500,19 @@ void DSStream_Process()
 void DSStream_Discontinuity()
 {
     HleCall call;
+    const GuestAddress pointer = call.Arg(0);
+    DsoundState& state = State();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    Stream* stream = FindStream(pointer);
+    if (stream != nullptr)
+    {
+        ++stream->discontinuities;
+        if (state.trace && stream->discontinuities <= kMaxLoggedCalls)
+        {
+            std::fprintf(stderr, "[dsound] stream %08X Discontinuity #%llu\n", pointer,
+                         static_cast<unsigned long long>(stream->discontinuities));
+        }
+    }
     call.Return(kDsOk, 1);
 }
 
@@ -466,11 +520,19 @@ void DSStream_Discontinuity()
 void DSStream_Flush()
 {
     HleCall call;
+    const GuestAddress pointer = call.Arg(0);
     {
-        std::lock_guard<std::mutex> lock(State().mutex);
-        Stream* stream = FindStream(call.Arg(0));
+        DsoundState& state = State();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        Stream* stream = FindStream(pointer);
         if (stream != nullptr)
         {
+            ++stream->flushes;
+            if (state.trace && stream->flushes <= kMaxLoggedCalls)
+            {
+                std::fprintf(stderr, "[dsound] stream %08X Flush #%llu\n", pointer,
+                             static_cast<unsigned long long>(stream->flushes));
+            }
             FlushLocked(*stream);
         }
     }
@@ -491,11 +553,20 @@ void DSStream_Destructor()
 void IDirectSoundStream_Pause()
 {
     HleCall call;
-    std::lock_guard<std::mutex> lock(State().mutex);
-    Stream* stream = FindStream(call.Arg(0));
+    const GuestAddress pointer = call.Arg(0);
+    const uint32_t pause = call.Arg(1);
+    DsoundState& state = State();
+    std::lock_guard<std::mutex> lock(state.mutex);
+    Stream* stream = FindStream(pointer);
     if (stream != nullptr)
     {
-        stream->paused = call.Arg(1) != 0;
+        stream->paused = pause != 0;
+        ++stream->pause_calls;
+        if (state.trace && stream->pause_calls <= kMaxLoggedCalls)
+        {
+            std::fprintf(stderr, "[dsound] stream %08X Pause(%u) #%llu\n", pointer, pause,
+                         static_cast<unsigned long long>(stream->pause_calls));
+        }
     }
     call.Return(kDsOk, 2);
 }
@@ -544,11 +615,19 @@ void IDirectSoundStream_SetFrequency()
 void IDirectSoundStream_FlushEx()
 {
     HleCall call;
+    const GuestAddress pointer = call.Arg(0);
     {
-        std::lock_guard<std::mutex> lock(State().mutex);
-        Stream* stream = FindStream(call.Arg(0));
+        DsoundState& state = State();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        Stream* stream = FindStream(pointer);
         if (stream != nullptr)
         {
+            ++stream->flushes;
+            if (state.trace && stream->flushes <= kMaxLoggedCalls)
+            {
+                std::fprintf(stderr, "[dsound] stream %08X FlushEx #%llu (flags %08X)\n", pointer,
+                             static_cast<unsigned long long>(stream->flushes), call.Arg(3));
+            }
             FlushLocked(*stream);
         }
     }
@@ -599,6 +678,82 @@ void MixStreamsLocked(float* samples, uint32_t frames)
     {
         MixStream(entry.second, samples, frames);
     }
+    if (!State().trace || g_streams.empty())
+    {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    if (g_last_report.time_since_epoch().count() != 0 && now - g_last_report < kReportInterval)
+    {
+        return;
+    }
+    g_last_report = now;
+    for (const auto& [pointer, stream] : g_streams)
+    {
+        uint32_t done_count = 0;
+        for (const Packet& packet : stream.packets)
+        {
+            if (packet.done)
+            {
+                ++done_count;
+            }
+        }
+        char delivery[32];
+        if (stream.last_delivery.time_since_epoch().count() == 0)
+        {
+            std::snprintf(delivery, sizeof(delivery), "never");
+        }
+        else
+        {
+            const double ago = std::chrono::duration<double>(now - stream.last_delivery).count();
+            std::snprintf(delivery, sizeof(delivery), "%.1f s ago", ago);
+        }
+        std::fprintf(stderr,
+                     "[dsound] stream %08X: submitted %llu (%llu bytes), mixed %llu, completed %llu, queued %zu (%u "
+                     "done), starved %llu, paused-mixes %llu, flushes %llu, discontinuities %llu, pauses %llu (now "
+                     "%s), last delivery %s\n",
+                     pointer, static_cast<unsigned long long>(stream.submitted),
+                     static_cast<unsigned long long>(stream.submitted_bytes),
+                     static_cast<unsigned long long>(stream.mixed_out),
+                     static_cast<unsigned long long>(stream.completed), stream.packets.size(), done_count,
+                     static_cast<unsigned long long>(stream.starved_mixes),
+                     static_cast<unsigned long long>(stream.paused_mixes),
+                     static_cast<unsigned long long>(stream.flushes),
+                     static_cast<unsigned long long>(stream.discontinuities),
+                     static_cast<unsigned long long>(stream.pause_calls), stream.paused ? "paused" : "playing",
+                     delivery);
+    }
+}
+
+bool StreamStatsForTest(GuestAddress pointer, StreamStats* stats)
+{
+    std::lock_guard<std::mutex> lock(State().mutex);
+    const Stream* stream = FindStream(pointer);
+    if (stream == nullptr || stats == nullptr)
+    {
+        return false;
+    }
+    stats->submitted = stream->submitted;
+    stats->submitted_bytes = stream->submitted_bytes;
+    stats->mixed_out = stream->mixed_out;
+    stats->completed = stream->completed;
+    stats->starved_mixes = stream->starved_mixes;
+    stats->paused_mixes = stream->paused_mixes;
+    stats->flushes = stream->flushes;
+    stats->discontinuities = stream->discontinuities;
+    stats->pause_calls = stream->pause_calls;
+    stats->queued = static_cast<uint32_t>(stream->packets.size());
+    stats->done_queued = 0;
+    for (const Packet& packet : stream->packets)
+    {
+        if (packet.done)
+        {
+            ++stats->done_queued;
+        }
+    }
+    stats->paused = stream->paused;
+    stats->has_delivery = stream->last_delivery.time_since_epoch().count() != 0;
+    return true;
 }
 
 void RegisterStreamExports(runtime::HleRegistry& registry)

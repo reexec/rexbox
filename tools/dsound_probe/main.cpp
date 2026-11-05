@@ -7,6 +7,7 @@
 // Usage: rexbox_dsound_probe        (exit code 0 when every check passes)
 
 #include "rexbox/hle/dsound/dsound_hle.h"
+#include "dsound_internal.h"
 #include "rexbox/runtime/environment.h"
 #include "rexbox/runtime/guest_cpu.h"
 #include "rexbox/runtime/guest_heap.h"
@@ -598,6 +599,85 @@ void ProbeHeadroomAnd3d()
     Call("IDirectSoundBuffer_Release", {buffer});
 }
 
+void ProbeStreamStats()
+{
+    using rexbox::hle::dsound::StreamStats;
+    using rexbox::hle::dsound::StreamStatsForTest;
+
+    // 48 kHz mono 16-bit PCM stream, max 4 packets.
+    g_memory->Fill(kFormat, 0, 0x14);
+    g_memory->Write16(kFormat + 0x0, 1);
+    g_memory->Write16(kFormat + 0x2, 1);
+    g_memory->Write32(kFormat + 0x4, 48000);
+    g_memory->Write32(kFormat + 0x8, 96000);
+    g_memory->Write16(kFormat + 0xC, 2);
+    g_memory->Write16(kFormat + 0xE, 16);
+    g_memory->Fill(kDesc, 0, 0x18);
+    g_memory->Write32(kDesc + 0x4, 4);
+    g_memory->Write32(kDesc + 0x8, kFormat);
+    g_memory->Write32(kOut, 0);
+    Check(Call("DirectSoundCreateStream", {kDesc, kOut}) == kOk && Read32(kOut) != 0,
+          "DirectSoundCreateStream creates a stream");
+    const GuestAddress stream = Read32(kOut);
+
+    // Mixing with no packet queued raises starved_mixes.
+    Render(16);
+    StreamStats stats;
+    Check(StreamStatsForTest(stream, &stats) && stats.starved_mixes == 1 && stats.submitted == 0,
+          "mixing a stream with no packet raises starved_mixes");
+
+    // Two packets of 32 frames (64 bytes) each.
+    Fill16(kData, 128, 16384);
+    const GuestAddress pkt1 = kScratch + 0x200;
+    const GuestAddress pkt2 = kScratch + 0x220;
+    const GuestAddress done1 = kScratch + 0x240;
+    const GuestAddress status1 = kScratch + 0x244;
+    const GuestAddress done2 = kScratch + 0x248;
+    const GuestAddress status2 = kScratch + 0x24C;
+    g_memory->Fill(pkt1, 0, 0x40);
+    g_memory->Write32(pkt1 + 0x0, kData);
+    g_memory->Write32(pkt1 + 0x4, 64);
+    g_memory->Write32(pkt1 + 0x8, done1);
+    g_memory->Write32(pkt1 + 0xC, status1);
+    g_memory->Write32(pkt2 + 0x0, kData + 64);
+    g_memory->Write32(pkt2 + 0x4, 64);
+    g_memory->Write32(pkt2 + 0x8, done2);
+    g_memory->Write32(pkt2 + 0xC, status2);
+
+    Check(Call("DSStream_Process", {stream, pkt1, 0}) == kOk &&
+              Call("DSStream_Process", {stream, pkt2, 0}) == kOk,
+          "DSStream_Process queues two packets");
+    Check(StreamStatsForTest(stream, &stats) && stats.submitted == 2 && stats.submitted_bytes == 128 &&
+              stats.queued == 2 && stats.done_queued == 0 && !stats.has_delivery,
+          "stats after Process: submitted 2 (128 bytes), queued 2 (0 done)");
+
+    // Mix exactly 64 frames: both packets play out without starving.
+    const std::vector<float> out = Render(64);
+    Check(Near(out[0], 0.5f) && StreamStatsForTest(stream, &stats) && stats.mixed_out == 2 && stats.completed == 0 &&
+              stats.queued == 2 && stats.done_queued == 2 && stats.starved_mixes == 1,
+          "stats after mixing 2 packets: mixed_out 2, completed 0, done_queued 2, starved_mixes unchanged");
+
+    // Deliver completions via DirectSoundDoWork.
+    Call("DirectSoundDoWork", {});
+    Check(StreamStatsForTest(stream, &stats) && stats.submitted == 2 && stats.mixed_out == 2 && stats.completed == 2 &&
+              stats.queued == 0 && stats.done_queued == 0 && stats.has_delivery && Read32(done1) == 64 &&
+              Read32(status1) == 0 && Read32(done2) == 64 && Read32(status2) == 0,
+          "stats after DirectSoundDoWork: submitted 2, mixed_out 2, completed 2, last_delivery set");
+
+    // Pause, Discontinuity, Flush counters.
+    Call("IDirectSoundStream_Pause", {stream, 1});
+    Render(16);
+    Call("IDirectSoundStream_Pause", {stream, 0});
+    Call("DSStream_Discontinuity", {stream});
+    Call("DSStream_Flush", {stream});
+    Check(StreamStatsForTest(stream, &stats) && stats.pause_calls == 2 && stats.paused_mixes == 1 && !stats.paused &&
+              stats.discontinuities == 1 && stats.flushes == 1,
+          "Pause, paused mix, Discontinuity and Flush counters");
+
+    Check(Call("DSStream_Release", {stream}) == 0 && !StreamStatsForTest(stream, &stats),
+          "DSStream_Release destroys the stream");
+}
+
 }  // namespace
 
 int main()
@@ -629,6 +709,7 @@ int main()
     ProbeAccepted();
     ProbeXdk4531();
     ProbeHeadroomAnd3d();
+    ProbeStreamStats();
 
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
