@@ -41,6 +41,32 @@ int g_hle_fallback_lifted = -1;
 
 thread_local runtime::GuestAddress t_stop_target = 0;
 thread_local const RexboxHleSlot* t_stop_slot = nullptr;
+// The generated override whose HLE export runs on this thread (issue #67):
+// RunLiftedOriginal runs its lifted body.
+thread_local const RexboxHleSlot* t_running_slot = nullptr;
+
+bool RunRunningSlotOriginal()
+{
+    const RexboxHleSlot* slot = t_running_slot;
+    if (slot == nullptr || slot->lifted == nullptr)
+    {
+        return false;
+    }
+    // The original may reach other exports; none of them is this slot's.
+    t_running_slot = nullptr;
+    slot->lifted();
+    t_running_slot = slot;
+    return true;
+}
+
+// Runs a slot's export with t_running_slot set to it, restoring the outer one.
+void RunSlotExport(RexboxHleSlot* slot)
+{
+    const RexboxHleSlot* outer = t_running_slot;
+    t_running_slot = slot;
+    slot->resolved();
+    t_running_slot = outer;
+}
 
 std::mutex g_log_mutex;
 std::unordered_set<uint32_t> g_logged_sites;
@@ -75,6 +101,7 @@ void AttachBridge(runtime::GuestMemory* memory, runtime::HleRegistry* registry)
 {
     g_memory = memory;
     g_registry = registry;
+    runtime::SetLiftedOriginalRunner(&RunRunningSlotOriginal);
 }
 
 void SetStopOnUnresolvedCall(bool stop)
@@ -426,12 +453,12 @@ void rexbox_hle_enter(RexboxHleSlot* slot)
             const uint32_t arg2 = memory->Read32(esp + 12);
             const uint32_t caller = memory->Read32(esp);
             const uint32_t ecx = rexbox_recomp_get_gpr(1);
-            slot->resolved();
+            bridge::RunSlotExport(slot);
             std::fprintf(stderr, "[hle-trace] %s %s(%08X, %08X, %08X; ecx %08X) from %08X -> eax %08X\n",
                          slot->library, slot->name, arg0, arg1, arg2, ecx, caller, rexbox_recomp_get_gpr(0));
             return;
         }
-        slot->resolved();
+        bridge::RunSlotExport(slot);
         return;
     }
     // Diagnostic: REXBOX_HLE_FALLBACK=lifted (or SetUnimplementedHleFallback)

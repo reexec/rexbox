@@ -74,4 +74,20 @@ const HleExport* HleRegistry::LookupExport(GuestAddress address) const
     return it == bindings_.end() ? nullptr : &exports_[it->second];
 }
 
+namespace
+{
+// Set once by the recompiled-code bridge, read by any guest thread.
+LiftedOriginalRunner g_lifted_original_runner = nullptr;
+}  // namespace
+
+void SetLiftedOriginalRunner(LiftedOriginalRunner runner)
+{
+    g_lifted_original_runner = runner;
+}
+
+bool RunLiftedOriginal()
+{
+    return g_lifted_original_runner != nullptr && g_lifted_original_runner();
+}
+
 }  // namespace rexbox::runtime

@@ -56,6 +56,66 @@ void DestroyResource(GuestAddress resource)
     g_resources.erase(it);
 }
 
+}  // namespace
+
+bool DestroyResourceHostSide(GuestAddress resource)
+{
+    const auto it = g_resources.find(resource);
+    if (it != g_resources.end() &&
+        (it->second.owns_memory || it->second.owns_header || it->second.kind == ResourceKind::kBackBuffer ||
+         it->second.kind == ResourceKind::kDepthStencil))
+    {
+        // The HLE made it (or the device holds it): its own path frees it.
+        DestroyResource(resource);
+        return false;
+    }
+    const GuestAddress data = Memory().Read32(resource + header::kData);
+    if (data != 0)
+    {
+        ForgetRenderTargetMemory(data);
+    }
+    ForgetTexture(resource);
+    if (it != g_resources.end())
+    {
+        g_resources.erase(it);
+    }
+    return true;
+}
+
+namespace
+{
+
+// The title's D3D_DestroyResource (`_0__LTCG_edi1`, resource in edi), bound
+// by the title profile as an XDK internal (issue #67). Calling it through the
+// dispatch reaches its generated override, so the export drops the host state
+// and then runs the library body, which frees through the title's allocator.
+constexpr char kDestroyResourceName[] = "D3D_DestroyResource";
+
+// A resource whose last reference went (Release, a released binding).
+void DestroyReleasedResource(GuestAddress resource)
+{
+    const auto it = g_resources.find(resource);
+    const bool hle_made = it != g_resources.end() &&
+                          (it->second.owns_memory || it->second.owns_header ||
+                           it->second.kind == ResourceKind::kBackBuffer || it->second.kind == ResourceKind::kDepthStencil);
+    const GuestAddress routine = hle_made ? 0 : runtime::Env().registry->FindVariable(kDestroyResourceName);
+    if (routine == 0)
+    {
+        DestroyResource(resource);
+        return;
+    }
+    runtime::GuestCpu& cpu = runtime::Env().executor->Cpu();
+    const uint32_t saved_edi = cpu.Get(runtime::Gpr::kEdi);
+    cpu.Set(runtime::Gpr::kEdi, resource);
+    bool called = false;
+    runtime::Env().executor->CallGuest(routine, nullptr, 0, &called);
+    cpu.Set(runtime::Gpr::kEdi, saved_edi);
+    if (!called)
+    {
+        DestroyResource(resource);
+    }
+}
+
 // ULONG D3DResource_AddRef(D3DResource* pThis)
 void D3DResource_AddRef()
 {
@@ -334,7 +394,7 @@ uint32_t ReleaseResourceRef(GuestAddress resource)
         }
         if ((memory.Read32(resource + header::kCommon) & header::kIntRefCountMask) == 0)
         {
-            DestroyResource(resource);
+            DestroyReleasedResource(resource);
             return 0;
         }
     }
@@ -362,7 +422,7 @@ void ReleaseResourceBinding(GuestAddress resource)
     memory.Write32(resource + header::kCommon, updated);
     if ((updated & (header::kRefCountMask | header::kIntRefCountMask)) == 0)
     {
-        DestroyResource(resource);
+        DestroyReleasedResource(resource);
     }
 }
 
