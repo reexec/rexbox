@@ -181,6 +181,15 @@ void NtProtectVirtualMemory()
     call.Return(kStatusSuccess, 4);
 }
 
+// The heap address a contiguous-memory pointer stands for (issue #68): titles
+// and the libraries free and query through the kernel's windows onto physical
+// RAM (0x80000000 | physical, the write-combined 0xF0000000 one), so a block
+// is looked up by its address below RAM.
+GuestAddress HeapAddress(GuestAddress address)
+{
+    return Memory().Fold(address);
+}
+
 GuestAddress AllocateContiguous(uint32_t size, uint32_t alignment)
 {
     return AllocateZeroed(size, alignment < runtime::GuestHeap::kPageSize ? runtime::GuestHeap::kPageSize : alignment);
@@ -210,7 +219,7 @@ void MmAllocateContiguousMemoryEx()
 void MmFreeContiguousMemory()
 {
     HleCall call;
-    Heap().Free(call.Arg(0));
+    Heap().Free(HeapAddress(call.Arg(0)));
     call.Return(0, 1);
 }
 
@@ -237,8 +246,8 @@ void MmFreeSystemMemory()
 {
     HleCall call;
     GuestAddress block = 0;
-    const uint32_t size = Heap().BlockSizeContaining(call.Arg(0), &block);
-    Heap().Free(call.Arg(0));
+    const uint32_t size = Heap().BlockSizeContaining(HeapAddress(call.Arg(0)), &block);
+    Heap().Free(HeapAddress(call.Arg(0)));
     call.Return(size / runtime::GuestHeap::kPageSize, 2);
 }
 
@@ -247,14 +256,14 @@ void MmQueryAllocationSize()
 {
     HleCall call;
     GuestAddress block = 0;
-    call.Return(Heap().BlockSizeContaining(call.Arg(0), &block), 1);
+    call.Return(Heap().BlockSizeContaining(HeapAddress(call.Arg(0)), &block), 1);
 }
 
 // ULONG_PTR MmGetPhysicalAddress(PVOID BaseAddress)
 void MmGetPhysicalAddress()
 {
     HleCall call;
-    call.Return(call.Arg(0), 1);
+    call.Return(HeapAddress(call.Arg(0)), 1);
 }
 
 // ULONG MmQueryAddressProtect(PVOID VirtualAddress)
@@ -262,7 +271,7 @@ void MmQueryAddressProtect()
 {
     HleCall call;
     GuestAddress block = 0;
-    Heap().BlockSizeContaining(call.Arg(0), &block);
+    Heap().BlockSizeContaining(HeapAddress(call.Arg(0)), &block);
     call.Return(ProtectionOf(block), 1);
 }
 
@@ -271,7 +280,7 @@ void MmSetAddressProtect()
 {
     HleCall call;
     GuestAddress block = 0;
-    Heap().BlockSizeContaining(call.Arg(0), &block);
+    Heap().BlockSizeContaining(HeapAddress(call.Arg(0)), &block);
     RecordProtection(block, call.Arg(2));
     call.Return(0, 3);
 }

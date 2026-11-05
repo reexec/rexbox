@@ -551,7 +551,7 @@ void D3D_FreeContiguousMemory()
     HleCall call;
     if (call.Arg(0) != 0)
     {
-        Heap().Free(call.Arg(0));
+        Heap().Free(Memory().Fold(call.Arg(0)));  // a | 0x80000000 pointer too (issue #68)
     }
     call.Return(0, 1);
 }
