@@ -1,8 +1,10 @@
 #include "d3d8_gl.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <type_traits>
 #include <vector>
 
 namespace rexbox::hle::d3d8
@@ -18,15 +20,18 @@ int g_max_anisotropy = 1;  // GL_MAX_TEXTURE_MAX_ANISOTROPY, 1 without the exten
 bool g_es = false;
 uint32_t g_state_epoch = 1;
 
-// REXBOX_GL_CALLS=1: every entry point goes through a wrapper that counts
-// its calls (diagnostic, read by d3d8_profile). Each Load line instantiates
-// its own wrapper, so each keeps its own pointer to the driver's function.
+// REXBOX_GL_CALLS=1|time: every entry point goes through a wrapper that counts
+// its calls, and with `time` also times each call (diagnostic, read by
+// d3d8_profile). Each Load line instantiates its own wrapper, so each keeps
+// its own pointer to the driver's function.
 struct CallCounter
 {
     const char* name;
     uint64_t count;
+    uint64_t nanoseconds;
 };
 std::vector<CallCounter> g_counters;
+bool g_timing = false;
 
 template <int Id, typename Function>
 struct Counted;
@@ -39,7 +44,26 @@ struct Counted<Id, R(REXBOX_GL_APIENTRY*)(Args...)>
     static R REXBOX_GL_APIENTRY Call(Args... args)
     {
         ++g_counters[index].count;
-        return real(args...);
+        if (!g_timing)
+        {
+            return real(args...);
+        }
+        const auto start = std::chrono::steady_clock::now();
+        if constexpr (std::is_void_v<R>)
+        {
+            real(args...);
+            g_counters[index].nanoseconds += static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start)
+                    .count());
+        }
+        else
+        {
+            R result = real(args...);
+            g_counters[index].nanoseconds += static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start)
+                    .count());
+            return result;
+        }
     }
 };
 
@@ -51,7 +75,7 @@ void Install(Function* slot, void* address, const char* name)
     {
         Counted<Id, Function>::real = *slot;
         Counted<Id, Function>::index = g_counters.size();
-        g_counters.push_back({name, 0});
+        g_counters.push_back({name, 0, 0});
         *slot = &Counted<Id, Function>::Call;
     }
 }
@@ -82,6 +106,12 @@ void LoadOptional(Function* slot, const char* name)
 
 bool LoadGlFunctions(GlFunctions* functions, std::string* missing)
 {
+    g_counters.clear();
+    g_timing = GlCallTimingEnabled();
+    if (g_timing)
+    {
+        (void)GlCallTimerPairNanoseconds();
+    }
     GlFunctions f;
     std::string first_missing;
     bool ok = true;
@@ -288,18 +318,44 @@ bool GlCallCountingEnabled()
     return enabled;
 }
 
-std::vector<std::pair<const char*, uint64_t>> TakeGlCallCounts()
+bool GlCallTimingEnabled()
 {
-    std::vector<std::pair<const char*, uint64_t>> counts;
+    static const bool enabled = [] {
+        const char* value = std::getenv("REXBOX_GL_CALLS");
+        return value != nullptr && std::strcmp(value, "time") == 0;
+    }();
+    return enabled;
+}
+
+double GlCallTimerPairNanoseconds()
+{
+    static const double pair_ns = [] {
+        constexpr int kPairs = 10000;
+        std::chrono::steady_clock::duration total{};
+        for (int i = 0; i < kPairs; ++i)
+        {
+            const auto start = std::chrono::steady_clock::now();
+            total += std::chrono::steady_clock::now() - start;
+        }
+        return std::chrono::duration<double, std::nano>(total).count() / kPairs;
+    }();
+    return pair_ns;
+}
+
+std::vector<GlCallCount> TakeGlCallCounts()
+{
+    std::vector<GlCallCount> counts;
     for (CallCounter& counter : g_counters)
     {
         if (counter.count != 0)
         {
-            counts.emplace_back(counter.name, counter.count);
+            counts.push_back({counter.name, counter.count, counter.nanoseconds});
             counter.count = 0;
+            counter.nanoseconds = 0;
         }
     }
-    std::sort(counts.begin(), counts.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+    std::sort(counts.begin(), counts.end(),
+              [](const GlCallCount& a, const GlCallCount& b) { return a.count > b.count; });
     return counts;
 }
 
