@@ -378,7 +378,28 @@ uint64_t VertexShaderConstantsVersion()
 const psh::Definition* FindPixelShader(uint32_t handle)
 {
     const auto it = g_pixel_shaders.find(handle);
-    return it == g_pixel_shaders.end() ? nullptr : &it->second.words;
+    if (it != g_pixel_shaders.end())
+    {
+        return &it->second.words;
+    }
+    // A title that keeps the library's CreatePixelShader lifted hands over the
+    // library's object (issue #73): [handle + 8] points to the definition, as
+    // the original SetPixelShader reads it. Read afresh at each draw, since
+    // the title owns that memory.
+    static std::unordered_map<uint32_t, psh::Definition> guest_shaders;
+    runtime::GuestMemory& memory = Memory();
+    if (!memory.IsValid(handle, 12))
+    {
+        return nullptr;
+    }
+    const GuestAddress definition = memory.Read32(handle + 8);
+    if (definition == 0 || !memory.IsValid(definition, kPixelShaderDefBytes))
+    {
+        return nullptr;
+    }
+    psh::Definition& words = guest_shaders[handle];
+    std::memcpy(words.data(), memory.Translate(definition), kPixelShaderDefBytes);
+    return &words;
 }
 
 const float (*PixelShaderConstants())[4]
