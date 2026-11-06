@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -255,6 +256,9 @@ struct DsoundState
     EffectsImage effects;
     Listener listener;
     bool trace = false;  // REXBOX_DSOUND_TRACE
+    std::string dump_path;              // REXBOX_AUDIO_DUMP
+    float output_peak = 0.0f;           // max |sample| before clamp since last periodic report
+    uint32_t max_playing_buffers = 0;   // max playing buffer count since last periodic report
 };
 
 DsoundState& State();
@@ -287,12 +291,38 @@ void ReadMixBins(Buffer& buffer, GuestAddress mix_bins);
 bool ReadFormat(GuestAddress address, WaveFormat* format);
 // Mixes `frames` stereo frames into `samples` (added) and advances cursors.
 void MixLocked(float* samples, uint32_t frames);
+// Writes a 16-bit PCM WAV file of `frames` stereo frames for probe verification (design i072).
+bool WriteWavDumpForTest(const char* path, const float* samples, uint32_t frames);
 
 // Streams (dsound_stream.cpp, design i054). The mixer calls MixStreamsLocked
 // with the mutex held; DeliverStreamCompletions runs on a guest thread
 // without it (DirectSoundDoWork), completing the packets the mixer finished.
 void MixStreamsLocked(float* samples, uint32_t frames);
 void DeliverStreamCompletions();
+
+// Per-stream packet statistics and signal levels (designs i071, i072), read by the probe.
+struct StreamStats
+{
+    uint64_t submitted = 0;
+    uint64_t submitted_bytes = 0;
+    uint64_t mixed_out = 0;
+    uint64_t completed = 0;
+    uint64_t starved_mixes = 0;
+    uint64_t paused_mixes = 0;
+    uint64_t flushes = 0;
+    uint64_t discontinuities = 0;
+    uint64_t pause_calls = 0;
+    uint32_t queued = 0;
+    uint32_t done_queued = 0;
+    bool paused = false;
+    bool has_delivery = false;
+    float peak_raw = 0.0f;
+    float peak_out = 0.0f;
+    int32_t volume = 0;
+    uint32_t headroom = 0;
+};
+
+bool StreamStatsForTest(GuestAddress pointer, StreamStats* stats);
 
 void RegisterDeviceExports(runtime::HleRegistry& registry);
 void RegisterBufferExports(runtime::HleRegistry& registry);
