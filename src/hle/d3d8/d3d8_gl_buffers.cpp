@@ -5,6 +5,7 @@
 #include "d3d8_profile.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 #include <unordered_map>
 #include <vector>
@@ -22,6 +23,19 @@ constexpr uint32_t kIdleFrames = 600;
 // one query costs about as much as comparing 6 KiB
 // (docs/design/20261014-i046-hle-performance.md section 3.2).
 constexpr size_t kTrackedBytes = 8 * 1024;
+
+// Experiment for issue #78 (docs/design/20261107-i078-vao-cost.md):
+// REXBOX_GL_VAO=range (default, or unset) keeps one vertex array object per
+// cached vertex range; REXBOX_GL_VAO=single draws every range through the one
+// stream vertex array object (g_stream_array).
+bool SingleVertexArrayEnabled()
+{
+    static const bool single = [] {
+        const char* value = std::getenv("REXBOX_GL_VAO");
+        return value != nullptr && std::strcmp(value, "single") == 0;
+    }();
+    return single;
+}
 
 // What a vertex array object holds per attribute (vertex array state, so it
 // survives other code binding its own arrays).
@@ -389,7 +403,7 @@ size_t PrepareVertexData(uint32_t address, size_t bytes, bool cacheable)
     }
     CachedRange& range = g_vertex_ranges[(static_cast<uint64_t>(address) << 32) | static_cast<uint32_t>(bytes)];
     const bool unchanged = Unchanged(&range, address, bytes);
-    BindArray(&range.array);
+    BindArray(SingleVertexArrayEnabled() ? &g_stream_array : &range.array);
     g_array_binding.Bind(range.buffer);
     if (!unchanged)
     {
