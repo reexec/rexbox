@@ -11,7 +11,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace rexbox::hle::d3d8
@@ -306,11 +305,20 @@ void GlDepthRange(float near_value, float far_value);
 // cache compares the epoch it was filled in with GlStateEpoch.
 void InvalidateGlStateCache();
 
-// REXBOX_GL_CALLS=1: every GL entry point is called through a counting
-// wrapper (diagnostic). TakeGlCallCounts returns the calls since the last
-// take by entry point, most first, and starts counting again.
+// REXBOX_GL_CALLS=1|time: every GL entry point is called through a counting
+// wrapper (diagnostic); with `time`, each call is also timed with
+// steady_clock. TakeGlCallCounts returns the calls and nanoseconds since the
+// last take by entry point, most calls first, and starts counting again.
+struct GlCallCount
+{
+    const char* name = nullptr;
+    uint64_t count = 0;
+    uint64_t nanoseconds = 0;
+};
 bool GlCallCountingEnabled();
-std::vector<std::pair<const char*, uint64_t>> TakeGlCallCounts();
+bool GlCallTimingEnabled();
+double GlCallTimerPairNanoseconds();
+std::vector<GlCallCount> TakeGlCallCounts();
 uint32_t GlStateEpoch();
 
 }  // namespace rexbox::hle::d3d8

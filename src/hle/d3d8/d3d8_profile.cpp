@@ -362,6 +362,7 @@ void EndFrame(uint32_t frame)
         measured += Milliseconds(d);
     }
     measured /= frames;
+    const double cpu_ms = static_cast<double>(cpu_ns - g_window_cpu_ns) / 1e6 / frames;
     const auto per_frame = [frames](Phase phase) {
         return Milliseconds(g_phases[static_cast<size_t>(phase)]) / frames;
     };
@@ -370,7 +371,7 @@ void EndFrame(uint32_t frame)
                  "target %.2f upload %.2f attributes %.2f constants %.2f textures %.2f state %.2f draw %.2f present %.2f wait %.2f | "
                  "other %.2f\n",
                  1000.0 / wall, wall, Milliseconds(g_worst_frame), g_slow_frames,
-                 static_cast<double>(cpu_ns - g_window_cpu_ns) / 1e6 / frames,
+                 cpu_ms,
                  static_cast<double>(g_draws) / frames,
                  static_cast<double>(g_program_draws) / frames, static_cast<double>(g_vertex_bytes) / frames / 1024.0,
                  static_cast<double>(g_index_bytes) / frames / 1024.0, static_cast<double>(g_compare_bytes) / frames / 1024.0,
@@ -401,19 +402,49 @@ void EndFrame(uint32_t frame)
     }
     if (GlCallCountingEnabled())
     {
-        // REXBOX_GL_CALLS=1: GL calls per frame, by entry point.
+        // REXBOX_GL_CALLS=1|time: GL calls (and with `time`, driver time) per frame, by entry point.
         uint64_t total = 0;
-        const auto counts = TakeGlCallCounts();
-        for (const auto& [name, count] : counts)
+        uint64_t total_ns = 0;
+        std::vector<GlCallCount> counts = TakeGlCallCounts();
+        for (const GlCallCount& entry : counts)
         {
-            total += count;
+            total += entry.count;
+            total_ns += entry.nanoseconds;
         }
         std::string line = Format("[d3d8 profile] gl calls %.0f/frame:", static_cast<double>(total) / frames);
         for (size_t i = 0; i < counts.size() && i < 16; ++i)
         {
-            line += Format(" %s %.0f", counts[i].first, static_cast<double>(counts[i].second) / frames);
+            line += Format(" %s %.0f", counts[i].name, static_cast<double>(counts[i].count) / frames);
         }
         std::fprintf(stderr, "%s\n", line.c_str());
+        if (GlCallTimingEnabled())
+        {
+            static bool calibrated_logged = false;
+            const double pair_ns = GlCallTimerPairNanoseconds();
+            if (!calibrated_logged)
+            {
+                calibrated_logged = true;
+                std::fprintf(stderr,
+                             "[d3d8 profile] gl timer: %.1f ns/pair (10000 empty steady_clock::now pairs)\n",
+                             pair_ns);
+            }
+            std::sort(counts.begin(), counts.end(),
+                      [](const GlCallCount& a, const GlCallCount& b) { return a.nanoseconds > b.nanoseconds; });
+            const double gl_ms = static_cast<double>(total_ns) / 1e6 / frames;
+            const double calls_per_frame = static_cast<double>(total) / frames;
+            const double timer_ms = calls_per_frame * pair_ns / 1e6;
+            const double cpu_pct = cpu_ms > 0.0 ? (100.0 * gl_ms / cpu_ms) : 0.0;
+            std::string time_line =
+                Format("[d3d8 profile] gl time %.2f ms/frame in %.0f calls (timer %.2f ms/frame), %.0f%% of cpu:",
+                       gl_ms, calls_per_frame, timer_ms, cpu_pct);
+            for (size_t i = 0; i < counts.size() && i < 16; ++i)
+            {
+                time_line += Format(" %s %.2f (%.0f)", counts[i].name,
+                                    static_cast<double>(counts[i].nanoseconds) / 1e6 / frames,
+                                    static_cast<double>(counts[i].count) / frames);
+            }
+            std::fprintf(stderr, "%s\n", time_line.c_str());
+        }
     }
     g_window_start = now;
     g_window_cpu_ns = cpu_ns;
