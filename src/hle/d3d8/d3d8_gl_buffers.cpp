@@ -37,11 +37,12 @@ struct AttributeState
 };
 constexpr uint32_t kAttributes = 16;
 
-// A vertex array object and what it holds. Streamed vertices use one array;
-// each cached vertex range has its own, so a range drawn again with the same
-// layout needs no attribute calls (issue #23). The element binding is part
-// of the array; it is trusted only within the GL state epoch it was made in,
-// since other code may bind an element buffer while the array is bound.
+// A vertex array object and what it holds. One vertex array is used for every
+// draw; per-range arrays (issue #23) were removed in issue #78 because the
+// driver charged per-VAO validation in dense scenes
+// (docs/design/20261107-i078-vao-cost.md). The element binding is part of the
+// array; it is trusted only within the GL state epoch it was made in, since
+// other code may bind an element buffer while the array is bound.
 struct VertexArray
 {
     GLuint name = 0;
@@ -55,7 +56,6 @@ VertexArray g_stream_array;
 VertexArray* g_bound_array = nullptr;
 uint32_t g_bound_epoch = 0;
 uint32_t g_named_attributes = 0;  // named since the last FinishAttributes
-std::vector<VertexArray*> g_arrays;  // every array made, for ForgetBufferBindings
 
 // Binds `array`, making its GL object on first use.
 void BindArray(VertexArray* array)
@@ -71,7 +71,6 @@ void BindArray(VertexArray* array)
         }
         array->enabled = 0;
         array->element_epoch = 0;
-        g_arrays.push_back(array);
     }
     else if (g_bound_array == array && g_bound_epoch == GlStateEpoch())
     {
@@ -82,34 +81,16 @@ void BindArray(VertexArray* array)
     g_bound_epoch = GlStateEpoch();
 }
 
-void DeleteArray(VertexArray* array)
-{
-    if (array->name == 0)
-    {
-        return;
-    }
-    Gl().DeleteVertexArrays(1, &array->name);
-    array->name = 0;
-    g_arrays.erase(std::remove(g_arrays.begin(), g_arrays.end(), array), g_arrays.end());
-    if (g_bound_array == array)
-    {
-        g_bound_array = nullptr;
-    }
-}
-
-// A deleted buffer's name may come back for a new buffer while an array
-// still refers to the old one: every array's pointers and element binding
-// are sent again.
+// A deleted buffer's name may come back for a new buffer while the vertex
+// array still refers to the old one: its pointers and element binding are
+// sent again.
 void ForgetBufferBindings()
 {
-    for (VertexArray* array : g_arrays)
+    for (AttributeState& attribute : g_stream_array.attributes)
     {
-        for (AttributeState& attribute : array->attributes)
-        {
-            attribute.pointed = false;
-        }
-        array->element_epoch = 0;
+        attribute.pointed = false;
     }
+    g_stream_array.element_epoch = 0;
 }
 
 // A buffer binding the draws change, valid while `epoch` is the GL state
@@ -209,8 +190,7 @@ struct CachedRange
     std::vector<uint8_t> copy;  // the guest bytes at the last upload
     uint32_t last_used = 0;     // frame
     uint64_t write_version = 0; // guest write version when `copy` last matched
-    DrawIndices indices;          // index ranges: the prepared result
-    VertexArray array;            // vertex ranges: the array that points at `buffer`
+    DrawIndices indices;        // index ranges: the prepared result
 };
 
 struct IndexKey
@@ -313,7 +293,6 @@ void Sweep(Map* map, uint32_t frame, Binding* binding)
             {
                 binding->epoch = 0;
             }
-            DeleteArray(&it->second.array);
             gl.DeleteBuffers(1, &it->second.buffer);
             ForgetBufferBindings();
             it = map->erase(it);
@@ -389,7 +368,7 @@ size_t PrepareVertexData(uint32_t address, size_t bytes, bool cacheable)
     }
     CachedRange& range = g_vertex_ranges[(static_cast<uint64_t>(address) << 32) | static_cast<uint32_t>(bytes)];
     const bool unchanged = Unchanged(&range, address, bytes);
-    BindArray(&range.array);
+    BindArray(&g_stream_array);
     g_array_binding.Bind(range.buffer);
     if (!unchanged)
     {
