@@ -14,6 +14,8 @@
 #ifndef REXBOX_HLE_D3D8_D3D8_GL_PROGRAM_CACHE_H
 #define REXBOX_HLE_D3D8_D3D8_GL_PROGRAM_CACHE_H
 
+#include "d3d8_profile.h"
+
 #include <chrono>
 #include <cstdint>
 #include <string>
@@ -25,7 +27,10 @@ namespace rexbox::hle::d3d8
 bool ProgramCacheEnabled();
 
 // A linked program made from the stored binary of these sources, or 0.
-uint32_t LoadCachedProgram(const std::string& vertex_source, const std::string& fragment_source);
+// When loaded, `origin` (binary cache or warmed) and `made_time` are reported if requested.
+uint32_t LoadCachedProgram(const std::string& vertex_source, const std::string& fragment_source,
+                           profile::ProgramOrigin* origin = nullptr,
+                           std::chrono::steady_clock::duration* made_time = nullptr);
 
 // Stores a program linked from these sources; true when an entry was
 // written. The program must have been linked with the retrievable hint

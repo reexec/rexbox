@@ -980,7 +980,9 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
         }
     }
 
-    lap.Mark(profile::Phase::kSetup);
+    const GLuint gl_program = is_program ? vertex_program->program : program->program;
+    const auto setup_duration = lap.Mark(profile::Phase::kSetup);
+    const bool program_first_draw = profile::SlowFrameDetailEnabled() && profile::IsProgramPending(gl_program);
     BindRenderTarget(state.render_target, state.depth_target);
     lap.Mark(profile::Phase::kTarget);
     DrawIndices index_data;
@@ -1197,6 +1199,11 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
     lap.Mark(profile::Phase::kTextures);
     ApplyFixedState(CurrentFixedState(state.depth_target, layout.pretransformed, full_screen, width, height));
     lap.Mark(profile::Phase::kState);
+    std::chrono::steady_clock::time_point draw_start;
+    if (program_first_draw)
+    {
+        draw_start = std::chrono::steady_clock::now();
+    }
     if (arrays)
     {
         gl.DrawArrays(mode, 0, static_cast<GLsizei>(count));
@@ -1207,6 +1214,11 @@ void Draw(const char* name, uint32_t primitive, uint32_t count, IndexSource indi
         gl.DrawElements(mode, static_cast<GLsizei>(index_data.count),
                         index_data.use_short ? kGlUnsignedShort : kGlUnsignedInt,
                         reinterpret_cast<const void*>(index_data.offset));
+    }
+    if (program_first_draw)
+    {
+        const auto draw_duration = std::chrono::steady_clock::now() - draw_start;
+        profile::NoteProgramFirstDraw(gl_program, draw_duration, setup_duration);
     }
     lap.Mark(profile::Phase::kDraw);
     if (CaptureActive())
