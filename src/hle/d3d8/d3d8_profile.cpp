@@ -5,6 +5,7 @@
 
 #include "rexbox/platform/host_thread.h"
 #include "rexbox/platform/sampler.h"
+#include "rexbox/runtime/thread_activity.h"
 
 #include <algorithm>
 #include <array>
@@ -33,10 +34,17 @@ uint32_t SlowFrameMs()
 {
     static const uint32_t ms = [] {
         const char* value = std::getenv("REXBOX_D3D8_SLOW_FRAME");
-        return value != nullptr ? static_cast<uint32_t>(std::strtoul(value, nullptr, 10)) : 0u;
+        const uint32_t threshold = value != nullptr ? static_cast<uint32_t>(std::strtoul(value, nullptr, 10)) : 0u;
+        if (threshold != 0)
+        {
+            runtime::EnableWaitTotals();
+        }
+        return threshold;
     }();
     return ms;
 }
+
+const uint32_t g_slow_frame_init = SlowFrameMs();
 
 // Only the presenting thread counts: the first EndFrame marks it, and other
 // threads (a title's vblank thread, for one) are ignored.
@@ -262,7 +270,7 @@ void CountCompare(size_t bytes, bool again)
 }
 
 // REXBOX_D3D8_SLOW_FRAME: the frame that just ended, when it was long.
-void ReportSlowFrame(uint32_t frame, Clock::duration since_last, uint64_t cpu_ns)
+void ReportSlowFrame(uint32_t frame, Clock::duration since_last, uint64_t cpu_ns, const runtime::WaitTotals& waits)
 {
     const double wall = Milliseconds(since_last);
     if (wall > static_cast<double>(SlowFrameMs()))
@@ -276,13 +284,33 @@ void ReportSlowFrame(uint32_t frame, Clock::duration since_last, uint64_t cpu_ns
         const double draw = ms(Phase::kIndices) + ms(Phase::kSetup) + ms(Phase::kTarget) + ms(Phase::kUpload) +
                             ms(Phase::kAttributes) + ms(Phase::kConstants) + ms(Phase::kTextures) +
                             ms(Phase::kState) + ms(Phase::kDraw);
+        std::string wait_info;
+        if (waits.wait_count != 0)
+        {
+            wait_info = Format(" | waits %.1f ms (%u, longest %.1f %s), reads %u (%llu KiB, %.1f ms)",
+                               static_cast<double>(waits.wait_ns) / 1e6, waits.wait_count,
+                               static_cast<double>(waits.longest_wait_ns) / 1e6,
+                               waits.longest_what != nullptr ? waits.longest_what : "?",
+                               waits.read_count,
+                               static_cast<unsigned long long>(waits.read_bytes / 1024),
+                               static_cast<double>(waits.read_ns) / 1e6);
+        }
+        else
+        {
+            wait_info = Format(" | waits %.1f ms (%u), reads %u (%llu KiB, %.1f ms)",
+                               static_cast<double>(waits.wait_ns) / 1e6, waits.wait_count,
+                               waits.read_count,
+                               static_cast<unsigned long long>(waits.read_bytes / 1024),
+                               static_cast<double>(waits.read_ns) / 1e6);
+        }
         g_slow_text += Format(
                      "[d3d8 slow frame] %u: %.1f ms, cpu %.1f | draw phases %.1f (setup %.1f) present %.1f wait %.1f | "
-                     "other %.1f | draws %u, textures %u (%.0f KiB, %.1f ms), programs %u (%.1f ms)%s\n",
+                     "other %.1f | draws %u, textures %u (%.0f KiB, %.1f ms), programs %u (%.1f ms)%s%s\n",
                      frame, wall, static_cast<double>(cpu_ns - g_frame_cpu_ns) / 1e6, draw, ms(Phase::kSetup),
                      ms(Phase::kPresent), ms(Phase::kWait), wall - measured, g_frame_draws, g_frame_textures,
                      static_cast<double>(g_frame_texture_bytes) / 1024.0, Milliseconds(g_frame_texture_time),
                      g_frame_programs, Milliseconds(g_frame_program_time),
+                     wait_info.c_str(),
                      g_slow_flushed ? " (began with the held reports' write)" : "");
     }
 }
@@ -307,6 +335,7 @@ void EndFrame(uint32_t frame)
 {
     SampleAt(frame);
     t_presenting = true;
+    const runtime::WaitTotals wait_totals = runtime::TakeWaitTotals();
     const uint32_t interval = Interval();
     if (interval == 0 && SlowFrameMs() == 0)
     {
@@ -322,7 +351,7 @@ void EndFrame(uint32_t frame)
         g_slow_frames += since_last > std::chrono::microseconds(33400) ? 1 : 0;
         if (SlowFrameMs() != 0)
         {
-            ReportSlowFrame(frame, since_last, cpu_ns);
+            ReportSlowFrame(frame, since_last, cpu_ns, wait_totals);
         }
     }
     g_frame_phases = {};

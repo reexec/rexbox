@@ -6,8 +6,11 @@
 #include "kernel_internal.h"
 #include "kernel_vfs.h"
 
+#include "rexbox/runtime/thread_activity.h"
+
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <system_error>
@@ -385,6 +388,8 @@ uint64_t ResolveOffset(KernelObject& file, GuestAddress byte_offset)
 //     PIO_STATUS_BLOCK IoStatusBlock, PVOID Buffer, ULONG Length, PLARGE_INTEGER ByteOffset)
 void NtReadFile()
 {
+    const bool time_read = runtime::WaitTotalsEnabled();
+    const auto start = time_read ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     HleCall call;
     const std::shared_ptr<KernelObject> file = FileFromHandle(call.Arg(0));
     const GuestAddress io_status = call.Arg(4);
@@ -395,6 +400,11 @@ void NtReadFile()
         const uint32_t status = DeviceTransfer(*file, false, buffer, length, ResolveOffset(*file, call.Arg(7)), io_status);
         CompleteIo(call, status);
         call.Return(status, 8);
+        if (time_read)
+        {
+            const auto elapsed = std::chrono::steady_clock::now() - start;
+            runtime::NoteFileRead(length, std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
+        }
         return;
     }
     if (file == nullptr || file->stream == nullptr)
@@ -413,6 +423,11 @@ void NtReadFile()
     WriteIoStatus(io_status, status, read);
     CompleteIo(call, status);
     call.Return(status, 8);
+    if (time_read)
+    {
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        runtime::NoteFileRead(read, std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count());
+    }
 }
 
 // NTSTATUS NtWriteFile(HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE ApcRoutine, PVOID ApcContext,

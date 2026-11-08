@@ -7,9 +7,10 @@
 // processes on the machine disturb less than the wall time.
 //
 // REXBOX_D3D8_SLOW_FRAME=<ms>: one line for every present-to-present time
-// longer than <ms>, with that frame's phases, its texture uploads and the
-// programs it made, to find what a long frame spent its time on (diagnostic;
-// works with or without REXBOX_D3D8_PROFILE).
+// longer than <ms>, with that frame's phases, its texture uploads, the
+// programs it made, and the presenting thread's waits and file reads, to
+// find what a long frame spent its time on (diagnostic; works with or
+// without REXBOX_D3D8_PROFILE).
 //
 // REXBOX_SAMPLE=<first>-<last>[:<file>]: samples the presenting thread's
 // instruction pointer from present <first> to present <last> and writes the
