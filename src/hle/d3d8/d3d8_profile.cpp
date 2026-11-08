@@ -210,7 +210,9 @@ void CountTextureUpload(uint64_t bytes, Clock::duration elapsed)
 
 void NoteTextureUpload(uint32_t header, uint32_t format, uint32_t width, uint32_t height, uint32_t levels,
                        uint64_t gl_bytes, TextureUploadReason reason, bool same_size,
-                       Clock::duration decode_time, Clock::duration gl_time)
+                       Clock::duration decode_time, Clock::duration gl_time,
+                       Clock::duration storage_time, Clock::duration data_time,
+                       bool storage_path)
 {
     if (!SlowFrameDetailEnabled() || !t_presenting)
     {
@@ -233,10 +235,20 @@ void NoteTextureUpload(uint32_t header, uint32_t format, uint32_t width, uint32_
         break;
     }
     const unsigned long long kib = gl_bytes == 0 ? 0 : std::max<unsigned long long>(1, (gl_bytes + 512) / 1024);
-    g_frame_texture_details.push_back(
-        Format("  texture %08X fmt %02X %ux%u %u lv %llu KiB: %s, decode %.1f ms, gl %.1f ms\n",
-               header, format, width, height, levels, kib, reason_str.c_str(),
-               Milliseconds(decode_time), Milliseconds(gl_time)));
+    if (storage_path)
+    {
+        g_frame_texture_details.push_back(
+            Format("  texture %08X fmt %02X %ux%u %u lv %llu KiB: %s, decode %.1f ms, storage %.1f ms, data %.1f ms\n",
+                   header, format, width, height, levels, kib, reason_str.c_str(),
+                   Milliseconds(decode_time), Milliseconds(storage_time), Milliseconds(data_time)));
+    }
+    else
+    {
+        g_frame_texture_details.push_back(
+            Format("  texture %08X fmt %02X %ux%u %u lv %llu KiB: %s, decode %.1f ms, gl %.1f ms\n",
+                   header, format, width, height, levels, kib, reason_str.c_str(),
+                   Milliseconds(decode_time), Milliseconds(gl_time)));
+    }
 }
 
 void MarkProgramPending(uint32_t program, ProgramOrigin origin, Clock::duration made_time)
