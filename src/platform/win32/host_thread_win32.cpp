@@ -1,5 +1,6 @@
 #include "rexbox/platform/host_thread.h"
 
+#include <chrono>
 #include <windows.h>
 
 namespace rexbox::platform
@@ -65,6 +66,52 @@ uint64_t ThreadCpuTimeNanoseconds()
         return (static_cast<uint64_t>(t.dwHighDateTime) << 32) | t.dwLowDateTime;
     };
     return (ticks(kernel) + ticks(user)) * 100;  // FILETIME counts 100 ns
+}
+
+namespace
+{
+
+double ThreadCyclesToNanoseconds()
+{
+    static const double ratio = [] {
+        const HANDLE thread = GetCurrentThread();
+        ULONG64 start_cycles = 0;
+        if (!QueryThreadCycleTime(thread, &start_cycles) || start_cycles == 0)
+        {
+            return 0.0;
+        }
+        const auto start_time = std::chrono::steady_clock::now();
+        const auto target = start_time + std::chrono::milliseconds(10);
+        while (std::chrono::steady_clock::now() < target)
+        {
+        }
+        const auto end_time = std::chrono::steady_clock::now();
+        ULONG64 end_cycles = 0;
+        if (!QueryThreadCycleTime(thread, &end_cycles) || end_cycles <= start_cycles)
+        {
+            return 0.0;
+        }
+        const auto elapsed_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count();
+        return static_cast<double>(elapsed_ns) / static_cast<double>(end_cycles - start_cycles);
+    }();
+    return ratio;
+}
+
+}  // namespace
+
+uint64_t ThreadCpuPreciseNanoseconds()
+{
+    const double ratio = ThreadCyclesToNanoseconds();
+    if (ratio <= 0.0)
+    {
+        return ThreadCpuTimeNanoseconds();
+    }
+    ULONG64 cycles = 0;
+    if (!QueryThreadCycleTime(GetCurrentThread(), &cycles))
+    {
+        return ThreadCpuTimeNanoseconds();
+    }
+    return static_cast<uint64_t>(static_cast<double>(cycles) * ratio);
 }
 
 }  // namespace rexbox::platform

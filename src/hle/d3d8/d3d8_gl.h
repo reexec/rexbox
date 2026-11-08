@@ -245,6 +245,15 @@ struct GlFunctions
                                                    GLsizei width, GLsizei height, GLint border, GLsizei image_size,
                                                    const void* data) = nullptr;
     const GLubyte*(REXBOX_GL_APIENTRY* GetStringi)(GLenum name, GLuint index) = nullptr;
+    // Optional: immutable texture storage (GL 4.2, ARB_texture_storage, GLES 3.0) and sub-image uploads.
+    void(REXBOX_GL_APIENTRY* TexStorage2D)(GLenum target, GLsizei levels, GLenum internal_format,
+                                           GLsizei width, GLsizei height) = nullptr;
+    void(REXBOX_GL_APIENTRY* TexSubImage2D)(GLenum target, GLint level, GLint xoffset, GLint yoffset,
+                                            GLsizei width, GLsizei height, GLenum format, GLenum type,
+                                            const void* pixels) = nullptr;
+    void(REXBOX_GL_APIENTRY* CompressedTexSubImage2D)(GLenum target, GLint level, GLint xoffset, GLint yoffset,
+                                                      GLsizei width, GLsizei height, GLenum format,
+                                                      GLsizei image_size, const void* data) = nullptr;
     void(REXBOX_GL_APIENTRY* TexParameteri)(GLenum target, GLenum pname, GLint param) = nullptr;
     void(REXBOX_GL_APIENTRY* GenSamplers)(GLsizei count, GLuint* samplers) = nullptr;
     void(REXBOX_GL_APIENTRY* BindSampler)(GLuint unit, GLuint sampler) = nullptr;

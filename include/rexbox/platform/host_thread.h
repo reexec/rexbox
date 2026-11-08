@@ -27,6 +27,10 @@ void SleepMilliseconds(uint32_t milliseconds);
 // nanoseconds; the granularity is the OS clock tick. 0 when unknown.
 uint64_t ThreadCpuTimeNanoseconds();
 
+// The processor time the calling thread has used, in nanoseconds, with higher
+// precision (e.g. from thread cycle counters or clock_gettime). 0 when unknown.
+uint64_t ThreadCpuPreciseNanoseconds();
+
 }  // namespace rexbox::platform
 
 #endif  // REXBOX_PLATFORM_HOST_THREAD_H

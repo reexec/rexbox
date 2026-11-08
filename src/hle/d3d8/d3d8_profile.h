@@ -89,7 +89,10 @@ bool SlowFrameDetailEnabled();
 void NoteTextureUpload(uint32_t header, uint32_t format, uint32_t width, uint32_t height, uint32_t levels,
                        uint64_t gl_bytes, TextureUploadReason reason, bool same_size,
                        std::chrono::steady_clock::duration decode_time,
-                       std::chrono::steady_clock::duration gl_time);
+                       std::chrono::steady_clock::duration gl_time,
+                       std::chrono::steady_clock::duration storage_time = {},
+                       std::chrono::steady_clock::duration data_time = {},
+                       bool storage_path = false);
 
 // Tracks a newly made program awaiting its first draw.
 void MarkProgramPending(uint32_t program, ProgramOrigin origin, std::chrono::steady_clock::duration made_time);

@@ -92,6 +92,12 @@ Clock::duration g_frame_texture_time{};
 uint32_t g_frame_programs = 0;
 Clock::duration g_frame_program_time{};
 uint64_t g_frame_cpu_ns = 0;
+uint64_t g_frame_precise_cpu_ns = 0;
+uint64_t g_frame_vertex_bytes = 0;
+uint64_t g_frame_index_bytes = 0;
+uint32_t g_frame_compares = 0;
+uint64_t g_frame_compare_bytes = 0;
+uint32_t g_frame_compares_again = 0;
 std::vector<std::string> g_frame_texture_details;
 std::vector<std::string> g_frame_program_details;
 
@@ -204,7 +210,9 @@ void CountTextureUpload(uint64_t bytes, Clock::duration elapsed)
 
 void NoteTextureUpload(uint32_t header, uint32_t format, uint32_t width, uint32_t height, uint32_t levels,
                        uint64_t gl_bytes, TextureUploadReason reason, bool same_size,
-                       Clock::duration decode_time, Clock::duration gl_time)
+                       Clock::duration decode_time, Clock::duration gl_time,
+                       Clock::duration storage_time, Clock::duration data_time,
+                       bool storage_path)
 {
     if (!SlowFrameDetailEnabled() || !t_presenting)
     {
@@ -227,10 +235,20 @@ void NoteTextureUpload(uint32_t header, uint32_t format, uint32_t width, uint32_
         break;
     }
     const unsigned long long kib = gl_bytes == 0 ? 0 : std::max<unsigned long long>(1, (gl_bytes + 512) / 1024);
-    g_frame_texture_details.push_back(
-        Format("  texture %08X fmt %02X %ux%u %u lv %llu KiB: %s, decode %.1f ms, gl %.1f ms\n",
-               header, format, width, height, levels, kib, reason_str.c_str(),
-               Milliseconds(decode_time), Milliseconds(gl_time)));
+    if (storage_path)
+    {
+        g_frame_texture_details.push_back(
+            Format("  texture %08X fmt %02X %ux%u %u lv %llu KiB: %s, decode %.1f ms, storage %.1f ms, data %.1f ms\n",
+                   header, format, width, height, levels, kib, reason_str.c_str(),
+                   Milliseconds(decode_time), Milliseconds(storage_time), Milliseconds(data_time)));
+    }
+    else
+    {
+        g_frame_texture_details.push_back(
+            Format("  texture %08X fmt %02X %ux%u %u lv %llu KiB: %s, decode %.1f ms, gl %.1f ms\n",
+                   header, format, width, height, levels, kib, reason_str.c_str(),
+                   Milliseconds(decode_time), Milliseconds(gl_time)));
+    }
 }
 
 void MarkProgramPending(uint32_t program, ProgramOrigin origin, Clock::duration made_time)
@@ -293,6 +311,11 @@ void CountUpload(size_t vertex_bytes, size_t index_bytes)
     }
     g_vertex_bytes += vertex_bytes;
     g_index_bytes += index_bytes;
+    if (SlowFrameMs() != 0)
+    {
+        g_frame_vertex_bytes += vertex_bytes;
+        g_frame_index_bytes += index_bytes;
+    }
 }
 
 void CountMissing(const char* site)
@@ -356,10 +379,17 @@ void CountCompare(size_t bytes, bool again)
     ++g_compares;
     g_compares_again += again ? 1 : 0;
     g_compare_bytes += bytes;
+    if (SlowFrameMs() != 0)
+    {
+        ++g_frame_compares;
+        g_frame_compares_again += again ? 1 : 0;
+        g_frame_compare_bytes += bytes;
+    }
 }
 
 // REXBOX_D3D8_SLOW_FRAME: the frame that just ended, when it was long.
-void ReportSlowFrame(uint32_t frame, Clock::duration since_last, uint64_t cpu_ns, const runtime::WaitTotals& waits)
+void ReportSlowFrame(uint32_t frame, Clock::duration since_last, uint64_t cpu_ns, uint64_t precise_cpu_ns,
+                     const runtime::WaitTotals& waits)
 {
     const double wall = Milliseconds(since_last);
     if (wall > static_cast<double>(SlowFrameMs()))
@@ -393,13 +423,24 @@ void ReportSlowFrame(uint32_t frame, Clock::duration since_last, uint64_t cpu_ns
                                static_cast<double>(waits.read_ns) / 1e6);
         }
         g_slow_text += Format(
-                     "[d3d8 slow frame] %u: %.1f ms, cpu %.1f | draw phases %.1f (setup %.1f) present %.1f wait %.1f | "
-                     "other %.1f | draws %u, textures %u (%.0f KiB, %.1f ms), programs %u (%.1f ms)%s%s\n",
-                     frame, wall, static_cast<double>(cpu_ns - g_frame_cpu_ns) / 1e6, draw, ms(Phase::kSetup),
+                     "[d3d8 slow frame] %u: %.1f ms, cpu %.1f, oncpu %.1f | draw phases %.1f (setup %.1f) present %.1f wait %.1f | "
+                     "other %.1f | draws %u, textures %u (%.0f KiB, %.1f ms), programs %u (%.1f ms)%s | "
+                     "phases idx %.1f setup %.1f tgt %.1f upl %.1f attr %.1f const %.1f tex %.1f state %.1f draw %.1f | "
+                     "compared %llu KiB in %u (%u again), uploads %llu KiB v %llu KiB i%s\n",
+                     frame, wall, static_cast<double>(cpu_ns - g_frame_cpu_ns) / 1e6,
+                     static_cast<double>(precise_cpu_ns - g_frame_precise_cpu_ns) / 1e6,
+                     draw, ms(Phase::kSetup),
                      ms(Phase::kPresent), ms(Phase::kWait), wall - measured, g_frame_draws, g_frame_textures,
                      static_cast<double>(g_frame_texture_bytes) / 1024.0, Milliseconds(g_frame_texture_time),
                      g_frame_programs, Milliseconds(g_frame_program_time),
                      wait_info.c_str(),
+                     ms(Phase::kIndices), ms(Phase::kSetup), ms(Phase::kTarget), ms(Phase::kUpload),
+                     ms(Phase::kAttributes), ms(Phase::kConstants), ms(Phase::kTextures), ms(Phase::kState),
+                     ms(Phase::kDraw),
+                     static_cast<unsigned long long>((g_frame_compare_bytes + 512) / 1024),
+                     g_frame_compares, g_frame_compares_again,
+                     static_cast<unsigned long long>((g_frame_vertex_bytes + 512) / 1024),
+                     static_cast<unsigned long long>((g_frame_index_bytes + 512) / 1024),
                      g_slow_flushed ? " (began with the held reports' write)" : "");
         const size_t texture_count = g_frame_texture_details.size();
         const size_t print_count = std::min<size_t>(texture_count, 16);
@@ -446,6 +487,7 @@ void EndFrame(uint32_t frame)
     }
     const Clock::time_point now = Clock::now();
     const uint64_t cpu_ns = platform::ThreadCpuTimeNanoseconds();
+    const uint64_t precise_cpu_ns = SlowFrameMs() != 0 ? platform::ThreadCpuPreciseNanoseconds() : 0;
     if (g_started)
     {
         // Stutter shows in single frames, which a window's average hides.
@@ -454,7 +496,7 @@ void EndFrame(uint32_t frame)
         g_slow_frames += since_last > std::chrono::microseconds(33400) ? 1 : 0;
         if (SlowFrameMs() != 0)
         {
-            ReportSlowFrame(frame, since_last, cpu_ns, wait_totals);
+            ReportSlowFrame(frame, since_last, cpu_ns, precise_cpu_ns, wait_totals);
         }
     }
     g_frame_phases = {};
@@ -464,6 +506,10 @@ void EndFrame(uint32_t frame)
     g_frame_texture_details.clear();
     g_frame_program_details.clear();
     g_frame_cpu_ns = cpu_ns;
+    g_frame_precise_cpu_ns = precise_cpu_ns;
+    g_frame_vertex_bytes = g_frame_index_bytes = 0;
+    g_frame_compares = g_frame_compares_again = 0;
+    g_frame_compare_bytes = 0;
     if (SlowFrameMs() != 0)
     {
         FlushSlowFrames();

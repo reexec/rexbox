@@ -207,6 +207,9 @@ bool LoadGlFunctions(GlFunctions* functions, std::string* missing)
     LoadOptional<__LINE__>(&f.CompressedTexImage2D, "glCompressedTexImage2D");
     LoadOptional<__LINE__>(&f.GetStringi, "glGetStringi");
     LoadOptional<__LINE__>(&f.RenderbufferStorageMultisample, "glRenderbufferStorageMultisample");
+    LoadOptional<__LINE__>(&f.TexStorage2D, "glTexStorage2D");
+    LoadOptional<__LINE__>(&f.TexSubImage2D, "glTexSubImage2D");
+    LoadOptional<__LINE__>(&f.CompressedTexSubImage2D, "glCompressedTexSubImage2D");
     if (ok && f.ClearDepthf == nullptr && f.ClearDepth == nullptr)
     {
         first_missing = "glClearDepth";
