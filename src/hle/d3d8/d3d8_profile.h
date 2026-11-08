@@ -7,9 +7,11 @@
 // processes on the machine disturb less than the wall time.
 //
 // REXBOX_D3D8_SLOW_FRAME=<ms>: one line for every present-to-present time
-// longer than <ms>, with that frame's phases, its texture uploads and the
-// programs it made, to find what a long frame spent its time on (diagnostic;
-// works with or without REXBOX_D3D8_PROFILE).
+// longer than <ms>, with that frame's phases, its texture uploads, the
+// programs it made, and the presenting thread's waits and file reads, followed
+// by detail lines for each texture upload and first program draw, to
+// find what a long frame spent its time on (diagnostic; works with or
+// without REXBOX_D3D8_PROFILE).
 //
 // REXBOX_SAMPLE=<first>-<last>[:<file>]: samples the presenting thread's
 // instruction pointer from present <first> to present <last> and writes the
@@ -64,6 +66,37 @@ void CountProgramWarm(bool made, std::chrono::steady_clock::duration elapsed);
 // A texture (all its levels) uploaded to GL, `bytes` as uploaded, taking
 // `elapsed` with its conversion.
 void CountTextureUpload(uint64_t bytes, std::chrono::steady_clock::duration elapsed);
+
+enum class TextureUploadReason
+{
+    kNew,
+    kReuploadWritten,
+    kReuploadFields,
+    kReuploadHash,
+};
+
+enum class ProgramOrigin
+{
+    kCompiled,
+    kBinaryCache,
+    kWarmed,
+};
+
+// Whether detail lines for slow frames (REXBOX_D3D8_SLOW_FRAME) are collected.
+bool SlowFrameDetailEnabled();
+
+// Records detail for a texture upload during a frame.
+void NoteTextureUpload(uint32_t header, uint32_t format, uint32_t width, uint32_t height, uint32_t levels,
+                       uint64_t gl_bytes, TextureUploadReason reason, bool same_size,
+                       std::chrono::steady_clock::duration decode_time,
+                       std::chrono::steady_clock::duration gl_time);
+
+// Tracks a newly made program awaiting its first draw.
+void MarkProgramPending(uint32_t program, ProgramOrigin origin, std::chrono::steady_clock::duration made_time);
+bool IsProgramPending(uint32_t program);
+void NoteProgramFirstDraw(uint32_t program, std::chrono::steady_clock::duration draw_time,
+                          std::chrono::steady_clock::duration setup_time);
+
 // Called once per present with the present's number; prints a report every
 // n presents and starts or stops sampling.
 void EndFrame(uint32_t frame);
@@ -79,14 +112,17 @@ public:
             last_ = std::chrono::steady_clock::now();
         }
     }
-    void Mark(Phase phase)
+    std::chrono::steady_clock::duration Mark(Phase phase)
     {
         if (enabled_)
         {
             const auto now = std::chrono::steady_clock::now();
-            Add(phase, now - last_);
+            const auto elapsed = now - last_;
+            Add(phase, elapsed);
             last_ = now;
+            return elapsed;
         }
+        return {};
     }
 
 private:

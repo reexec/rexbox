@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <thread>
 #include <utility>
@@ -68,6 +69,13 @@ std::atomic<int64_t> g_last_present_ns{0};
 std::atomic<uint32_t> g_last_frame{0};
 std::atomic<WaitObjectDescriber> g_describer{nullptr};
 std::atomic<ThreadDescriber> g_thread_describer{nullptr};
+std::atomic<bool> g_wait_totals_enabled{false};
+
+thread_local int t_wait_depth = 0;
+thread_local int64_t t_wait_start_ns = 0;
+thread_local const char* t_outer_what = nullptr;
+thread_local bool t_outer_skipped = false;
+thread_local WaitTotals t_wait_totals{};
 
 // Marks the record dead when its thread ends.
 struct RecordOwner
@@ -346,6 +354,19 @@ void NoteHleEntry(const char* name, uint32_t esp)
 
 void NoteWaitBegin(const char* what, const GuestAddress* objects, size_t count, bool all, int64_t timeout_ms)
 {
+    if (g_wait_totals_enabled.load(std::memory_order_relaxed))
+    {
+        if (t_wait_depth == 0)
+        {
+            t_outer_skipped = (what != nullptr && std::strncmp(what, "D3D8 ", 5) == 0);
+            if (!t_outer_skipped)
+            {
+                t_wait_start_ns = NowNs();
+                t_outer_what = what;
+            }
+        }
+        ++t_wait_depth;
+    }
     ThreadRecord& record = Self();
     record.wait_count.store(static_cast<uint32_t>(count), std::memory_order_relaxed);
     for (size_t i = 0; i < count && i < kMaxWaitObjects; ++i)
@@ -363,6 +384,58 @@ void NoteWaitEnd()
 {
     Self().wait_what.store(nullptr, std::memory_order_release);
     PickUpGuestLocksAfterWait();
+    if (g_wait_totals_enabled.load(std::memory_order_relaxed))
+    {
+        if (t_wait_depth > 0)
+        {
+            --t_wait_depth;
+            if (t_wait_depth == 0)
+            {
+                if (!t_outer_skipped)
+                {
+                    const int64_t elapsed = NowNs() - t_wait_start_ns;
+                    const uint64_t elapsed_ns = elapsed > 0 ? static_cast<uint64_t>(elapsed) : 0;
+                    t_wait_totals.wait_ns += elapsed_ns;
+                    t_wait_totals.wait_count += 1;
+                    if (t_wait_totals.wait_count == 1 || elapsed_ns > t_wait_totals.longest_wait_ns)
+                    {
+                        t_wait_totals.longest_wait_ns = elapsed_ns;
+                        t_wait_totals.longest_what = t_outer_what;
+                    }
+                }
+                t_outer_skipped = false;
+                t_outer_what = nullptr;
+            }
+        }
+    }
+}
+
+void EnableWaitTotals()
+{
+    g_wait_totals_enabled.store(true, std::memory_order_relaxed);
+}
+
+bool WaitTotalsEnabled()
+{
+    return g_wait_totals_enabled.load(std::memory_order_relaxed);
+}
+
+void NoteFileRead(uint64_t bytes, uint64_t ns)
+{
+    if (!g_wait_totals_enabled.load(std::memory_order_relaxed))
+    {
+        return;
+    }
+    t_wait_totals.read_count += 1;
+    t_wait_totals.read_bytes += bytes;
+    t_wait_totals.read_ns += ns;
+}
+
+WaitTotals TakeWaitTotals()
+{
+    WaitTotals totals = t_wait_totals;
+    t_wait_totals = {};
+    return totals;
 }
 
 void NotePresent(uint32_t frame)

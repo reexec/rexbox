@@ -5,12 +5,15 @@
 
 #include "rexbox/platform/host_thread.h"
 #include "rexbox/platform/sampler.h"
+#include "rexbox/runtime/thread_activity.h"
 
 #include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace rexbox::hle::d3d8::profile
 {
@@ -33,10 +36,17 @@ uint32_t SlowFrameMs()
 {
     static const uint32_t ms = [] {
         const char* value = std::getenv("REXBOX_D3D8_SLOW_FRAME");
-        return value != nullptr ? static_cast<uint32_t>(std::strtoul(value, nullptr, 10)) : 0u;
+        const uint32_t threshold = value != nullptr ? static_cast<uint32_t>(std::strtoul(value, nullptr, 10)) : 0u;
+        if (threshold != 0)
+        {
+            runtime::EnableWaitTotals();
+        }
+        return threshold;
     }();
     return ms;
 }
+
+const uint32_t g_slow_frame_init = SlowFrameMs();
 
 // Only the presenting thread counts: the first EndFrame marks it, and other
 // threads (a title's vblank thread, for one) are ignored.
@@ -82,6 +92,16 @@ Clock::duration g_frame_texture_time{};
 uint32_t g_frame_programs = 0;
 Clock::duration g_frame_program_time{};
 uint64_t g_frame_cpu_ns = 0;
+std::vector<std::string> g_frame_texture_details;
+std::vector<std::string> g_frame_program_details;
+
+struct PendingProgramInfo
+{
+    ProgramOrigin origin;
+    Clock::duration made_time;
+};
+std::unordered_map<uint32_t, PendingProgramInfo> g_pending_programs;
+
 // Slow-frame lines held until FlushSlowFrames writes them.
 constexpr uint32_t kSlowFlushFrames = 600;
 std::string g_slow_text;
@@ -156,6 +176,11 @@ bool Enabled()
     return Interval() != 0 || SlowFrameMs() != 0;
 }
 
+bool SlowFrameDetailEnabled()
+{
+    return SlowFrameMs() != 0;
+}
+
 void Add(Phase phase, Clock::duration elapsed)
 {
     if (!t_presenting)
@@ -175,6 +200,78 @@ void CountTextureUpload(uint64_t bytes, Clock::duration elapsed)
     ++g_frame_textures;
     g_frame_texture_bytes += bytes;
     g_frame_texture_time += elapsed;
+}
+
+void NoteTextureUpload(uint32_t header, uint32_t format, uint32_t width, uint32_t height, uint32_t levels,
+                       uint64_t gl_bytes, TextureUploadReason reason, bool same_size,
+                       Clock::duration decode_time, Clock::duration gl_time)
+{
+    if (!SlowFrameDetailEnabled() || !t_presenting)
+    {
+        return;
+    }
+    std::string reason_str;
+    switch (reason)
+    {
+    case TextureUploadReason::kNew:
+        reason_str = "new";
+        break;
+    case TextureUploadReason::kReuploadWritten:
+        reason_str = Format("reupload(written) %s", same_size ? "same-size" : "resized");
+        break;
+    case TextureUploadReason::kReuploadFields:
+        reason_str = Format("reupload(fields) %s", same_size ? "same-size" : "resized");
+        break;
+    case TextureUploadReason::kReuploadHash:
+        reason_str = Format("reupload(hash) %s", same_size ? "same-size" : "resized");
+        break;
+    }
+    const unsigned long long kib = gl_bytes == 0 ? 0 : std::max<unsigned long long>(1, (gl_bytes + 512) / 1024);
+    g_frame_texture_details.push_back(
+        Format("  texture %08X fmt %02X %ux%u %u lv %llu KiB: %s, decode %.1f ms, gl %.1f ms\n",
+               header, format, width, height, levels, kib, reason_str.c_str(),
+               Milliseconds(decode_time), Milliseconds(gl_time)));
+}
+
+void MarkProgramPending(uint32_t program, ProgramOrigin origin, Clock::duration made_time)
+{
+    if (!SlowFrameDetailEnabled() || program == 0)
+    {
+        return;
+    }
+    g_pending_programs[program] = {origin, made_time};
+}
+
+bool IsProgramPending(uint32_t program)
+{
+    return g_pending_programs.find(program) != g_pending_programs.end();
+}
+
+void NoteProgramFirstDraw(uint32_t program, Clock::duration draw_time, Clock::duration setup_time)
+{
+    if (!SlowFrameDetailEnabled() || !t_presenting)
+    {
+        return;
+    }
+    const auto it = g_pending_programs.find(program);
+    if (it == g_pending_programs.end())
+    {
+        return;
+    }
+    const PendingProgramInfo pending = it->second;
+    g_pending_programs.erase(it);
+    const char* origin_str = "compiled";
+    if (pending.origin == ProgramOrigin::kBinaryCache)
+    {
+        origin_str = "binary cache";
+    }
+    else if (pending.origin == ProgramOrigin::kWarmed)
+    {
+        origin_str = "warmed";
+    }
+    g_frame_program_details.push_back(Format("  program %u: first draw %.1f ms (setup %.1f ms; made %.1f ms, %s)\n",
+                                             program, Milliseconds(draw_time), Milliseconds(setup_time),
+                                             Milliseconds(pending.made_time), origin_str));
 }
 
 void CountDraw(bool program)
@@ -262,7 +359,7 @@ void CountCompare(size_t bytes, bool again)
 }
 
 // REXBOX_D3D8_SLOW_FRAME: the frame that just ended, when it was long.
-void ReportSlowFrame(uint32_t frame, Clock::duration since_last, uint64_t cpu_ns)
+void ReportSlowFrame(uint32_t frame, Clock::duration since_last, uint64_t cpu_ns, const runtime::WaitTotals& waits)
 {
     const double wall = Milliseconds(since_last);
     if (wall > static_cast<double>(SlowFrameMs()))
@@ -276,14 +373,48 @@ void ReportSlowFrame(uint32_t frame, Clock::duration since_last, uint64_t cpu_ns
         const double draw = ms(Phase::kIndices) + ms(Phase::kSetup) + ms(Phase::kTarget) + ms(Phase::kUpload) +
                             ms(Phase::kAttributes) + ms(Phase::kConstants) + ms(Phase::kTextures) +
                             ms(Phase::kState) + ms(Phase::kDraw);
+        std::string wait_info;
+        if (waits.wait_count != 0)
+        {
+            wait_info = Format(" | waits %.1f ms (%u, longest %.1f %s), reads %u (%llu KiB, %.1f ms)",
+                               static_cast<double>(waits.wait_ns) / 1e6, waits.wait_count,
+                               static_cast<double>(waits.longest_wait_ns) / 1e6,
+                               waits.longest_what != nullptr ? waits.longest_what : "?",
+                               waits.read_count,
+                               static_cast<unsigned long long>(waits.read_bytes / 1024),
+                               static_cast<double>(waits.read_ns) / 1e6);
+        }
+        else
+        {
+            wait_info = Format(" | waits %.1f ms (%u), reads %u (%llu KiB, %.1f ms)",
+                               static_cast<double>(waits.wait_ns) / 1e6, waits.wait_count,
+                               waits.read_count,
+                               static_cast<unsigned long long>(waits.read_bytes / 1024),
+                               static_cast<double>(waits.read_ns) / 1e6);
+        }
         g_slow_text += Format(
                      "[d3d8 slow frame] %u: %.1f ms, cpu %.1f | draw phases %.1f (setup %.1f) present %.1f wait %.1f | "
-                     "other %.1f | draws %u, textures %u (%.0f KiB, %.1f ms), programs %u (%.1f ms)%s\n",
+                     "other %.1f | draws %u, textures %u (%.0f KiB, %.1f ms), programs %u (%.1f ms)%s%s\n",
                      frame, wall, static_cast<double>(cpu_ns - g_frame_cpu_ns) / 1e6, draw, ms(Phase::kSetup),
                      ms(Phase::kPresent), ms(Phase::kWait), wall - measured, g_frame_draws, g_frame_textures,
                      static_cast<double>(g_frame_texture_bytes) / 1024.0, Milliseconds(g_frame_texture_time),
                      g_frame_programs, Milliseconds(g_frame_program_time),
+                     wait_info.c_str(),
                      g_slow_flushed ? " (began with the held reports' write)" : "");
+        const size_t texture_count = g_frame_texture_details.size();
+        const size_t print_count = std::min<size_t>(texture_count, 16);
+        for (size_t i = 0; i < print_count; ++i)
+        {
+            g_slow_text += g_frame_texture_details[i];
+        }
+        if (texture_count > 16)
+        {
+            g_slow_text += Format("  ... %u more textures\n", static_cast<uint32_t>(texture_count - 16));
+        }
+        for (const std::string& prog : g_frame_program_details)
+        {
+            g_slow_text += prog;
+        }
     }
 }
 
@@ -307,6 +438,7 @@ void EndFrame(uint32_t frame)
 {
     SampleAt(frame);
     t_presenting = true;
+    const runtime::WaitTotals wait_totals = runtime::TakeWaitTotals();
     const uint32_t interval = Interval();
     if (interval == 0 && SlowFrameMs() == 0)
     {
@@ -322,13 +454,15 @@ void EndFrame(uint32_t frame)
         g_slow_frames += since_last > std::chrono::microseconds(33400) ? 1 : 0;
         if (SlowFrameMs() != 0)
         {
-            ReportSlowFrame(frame, since_last, cpu_ns);
+            ReportSlowFrame(frame, since_last, cpu_ns, wait_totals);
         }
     }
     g_frame_phases = {};
     g_frame_draws = g_frame_textures = g_frame_programs = 0;
     g_frame_texture_bytes = 0;
     g_frame_texture_time = g_frame_program_time = {};
+    g_frame_texture_details.clear();
+    g_frame_program_details.clear();
     g_frame_cpu_ns = cpu_ns;
     if (SlowFrameMs() != 0)
     {

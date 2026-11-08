@@ -134,9 +134,20 @@ GLuint Compile(GLenum type, const std::string& source, const std::string& key)
 GLuint Link(const std::string& vertex_source, const std::string& fragment_source, const std::string& id)
 {
     const auto started = std::chrono::steady_clock::now();
-    if (const GLuint cached = LoadCachedProgram(vertex_source, fragment_source); cached != 0)
+    profile::ProgramOrigin origin = profile::ProgramOrigin::kBinaryCache;
+    std::chrono::steady_clock::duration made_time{};
+    if (const GLuint cached = LoadCachedProgram(vertex_source, fragment_source, &origin, &made_time); cached != 0)
     {
-        profile::CountProgram(true, std::chrono::steady_clock::now() - started);
+        const auto elapsed = std::chrono::steady_clock::now() - started;
+        profile::CountProgram(true, elapsed);
+        if (profile::SlowFrameDetailEnabled())
+        {
+            if (origin != profile::ProgramOrigin::kWarmed)
+            {
+                made_time = elapsed;
+            }
+            profile::MarkProgramPending(cached, origin, made_time);
+        }
         return cached;
     }
     GlFunctions& gl = Gl();
@@ -172,7 +183,12 @@ GLuint Link(const std::string& vertex_source, const std::string& fragment_source
         ReportOnce("link " + id, Format("program for key %s does not link: %s", id.c_str(), log.data()));
         return 0;
     }
-    profile::CountProgram(false, std::chrono::steady_clock::now() - started);
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    profile::CountProgram(false, elapsed);
+    if (profile::SlowFrameDetailEnabled())
+    {
+        profile::MarkProgramPending(program, profile::ProgramOrigin::kCompiled, elapsed);
+    }
     const auto stored = std::chrono::steady_clock::now();
     if (StoreProgram(program, vertex_source, fragment_source))
     {

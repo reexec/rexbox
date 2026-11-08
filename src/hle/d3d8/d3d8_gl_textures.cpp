@@ -135,7 +135,13 @@ uint32_t SampleHash(uint32_t data, uint32_t bytes)
     return hash;
 }
 
-bool Upload(GuestAddress header, CachedTexture* cached)
+struct UploadTiming
+{
+    std::chrono::steady_clock::duration decode_time{};
+    std::chrono::steady_clock::duration gl_time{};
+};
+
+bool Upload(GuestAddress header, CachedTexture* cached, UploadTiming* timing = nullptr)
 {
     GlFunctions& gl = Gl();
     runtime::GuestMemory& memory = Memory();
@@ -180,6 +186,8 @@ bool Upload(GuestAddress header, CachedTexture* cached)
     }
     const uint32_t levels = linear ? 1 : std::max<uint32_t>(1, (format_field >> header::kFormatMipLevelsShift) & 0xF);
     const GLenum target = dimension == 3 ? kGlTexture3D : kGlTexture2D;
+    const bool measure = timing != nullptr;
+    auto gl_start = measure ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     if (cached->bound.texture == 0 || cached->target != target)
     {
         if (cached->bound.texture != 0)
@@ -193,6 +201,10 @@ bool Upload(GuestAddress header, CachedTexture* cached)
     gl.ActiveTexture(kGlTexture0);
     gl.BindTexture(target, cached->bound.texture);
     gl.PixelStorei(kGlUnpackAlignment, 1);
+    if (measure)
+    {
+        timing->gl_time += std::chrono::steady_clock::now() - gl_start;
+    }
     // DXT goes up as it is (the GPU decodes it, as the NV2A did) when the host
     // has S3TC; volume DXT and hosts without it decode on the CPU
     // (docs/design/20261017-i088-dxt-compressed.md).
@@ -222,9 +234,17 @@ bool Upload(GuestAddress header, CachedTexture* cached)
         }
         if (compressed)
         {
+            if (measure)
+            {
+                gl_start = std::chrono::steady_clock::now();
+            }
             gl.CompressedTexImage2D(target, static_cast<GLint>(level), DxtInternalFormat(format),
                                     static_cast<GLsizei>(width), static_cast<GLsizei>(height), 0,
                                     static_cast<GLsizei>(bytes), memory.Translate(address));
+            if (measure)
+            {
+                timing->gl_time += std::chrono::steady_clock::now() - gl_start;
+            }
             if (level == 0)
             {
                 cached->bound.width = width;
@@ -237,6 +257,7 @@ bool Upload(GuestAddress header, CachedTexture* cached)
         // Compressed levels smaller than a block decode from the padded block.
         const uint32_t decode_width = info.layout == PixelLayout::kCompressed ? std::max(width, 4u) : width;
         const uint32_t decode_height = info.layout == PixelLayout::kCompressed ? std::max(height, 4u) : height;
+        auto decode_start = measure ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         if (paletted)
         {
             DecodePalettedLevel(memory.Translate(address), width, height, depth, palette.data(),
@@ -258,6 +279,11 @@ bool Upload(GuestAddress header, CachedTexture* cached)
             }
             rgba.swap(cropped);
         }
+        if (measure)
+        {
+            timing->decode_time += std::chrono::steady_clock::now() - decode_start;
+            gl_start = std::chrono::steady_clock::now();
+        }
         if (target == kGlTexture3D)
         {
             gl.TexImage3D(target, static_cast<GLint>(level), static_cast<GLint>(kGlRgba8), static_cast<GLsizei>(width),
@@ -268,6 +294,10 @@ bool Upload(GuestAddress header, CachedTexture* cached)
         {
             gl.TexImage2D(target, static_cast<GLint>(level), static_cast<GLint>(kGlRgba8), static_cast<GLsizei>(width),
                           static_cast<GLsizei>(height), 0, kGlRgba, kGlUnsignedByte, rgba.data());
+        }
+        if (measure)
+        {
+            timing->gl_time += std::chrono::steady_clock::now() - gl_start;
         }
         if (level == 0)
         {
@@ -281,8 +311,16 @@ bool Upload(GuestAddress header, CachedTexture* cached)
     {
         return false;
     }
+    if (measure)
+    {
+        gl_start = std::chrono::steady_clock::now();
+    }
     gl.TexParameteri(target, kGlTextureBaseLevel, 0);
     gl.TexParameteri(target, kGlTextureMaxLevel, static_cast<GLint>(uploaded - 1));
+    if (measure)
+    {
+        timing->gl_time += std::chrono::steady_clock::now() - gl_start;
+    }
     cached->bound.levels = uploaded;
     cached->bound.format = format;
     cached->bound.kind = target == kGlTexture3D ? SamplerKind::k3D : SamplerKind::k2D;
@@ -404,19 +442,50 @@ BoundTexture ResolveTexture(GuestAddress header, GuestAddress palette)
     const uint32_t palette_bytes = (256u >> (palette_common >> header::kPaletteSizeShift)) * 4;
     const uint32_t frame = State().frame_count;
     CachedTexture& cached = SelectVariant(g_textures[header], paletted, palette_data, palette_common, frame);
-    bool upload = cached.bound.texture == 0 || cached.written || format_field != cached.format_field ||
-                  size_field != cached.size_field || data != cached.data;
+    const bool is_new = cached.bound.texture == 0;
+    const bool is_written = cached.written;
+    const bool is_fields = format_field != cached.format_field || size_field != cached.size_field ||
+                          data != cached.data;
+    bool upload = is_new || is_written || is_fields;
     // Writes without a lock: compare a sampled hash once per frame.
     const LevelLayout layout0 = HeaderLevelLayout(header, 0);
+    bool is_hash = false;
     if (!upload && cached.checked_frame != frame)
     {
         cached.checked_frame = frame;
-        upload = SampleHash(data & kPhysicalMask, layout0.size) != cached.hash ||
+        is_hash = SampleHash(data & kPhysicalMask, layout0.size) != cached.hash ||
                  (paletted && palette != 0 &&
                   SampleHash(palette_data & kPhysicalMask, palette_bytes) != cached.palette_hash);
+        upload = is_hash;
     }
     if (upload)
     {
+        profile::TextureUploadReason reason = profile::TextureUploadReason::kNew;
+        if (is_new)
+        {
+            reason = profile::TextureUploadReason::kNew;
+        }
+        else if (is_written)
+        {
+            reason = profile::TextureUploadReason::kReuploadWritten;
+        }
+        else if (is_fields)
+        {
+            reason = profile::TextureUploadReason::kReuploadFields;
+        }
+        else
+        {
+            reason = profile::TextureUploadReason::kReuploadHash;
+        }
+        const uint32_t format = (format_field >> header::kFormatFormatShift) & 0xFF;
+        const bool linear = size_field != 0;
+        const uint32_t log2_width = (format_field >> header::kFormatLog2WidthShift) & 0xF;
+        const uint32_t log2_height = (format_field >> header::kFormatLog2HeightShift) & 0xF;
+        const uint32_t width0 = linear ? layout0.width : std::max<uint32_t>(1, (1u << log2_width));
+        const uint32_t height0 = linear ? layout0.height : std::max<uint32_t>(1, (1u << log2_height));
+        const bool same_size =
+            !is_new && width0 == cached.bound.width && height0 == cached.bound.height && format == cached.bound.format;
+
         cached.format_field = format_field;
         cached.size_field = size_field;
         cached.data = data;
@@ -427,12 +496,20 @@ BoundTexture ResolveTexture(GuestAddress header, GuestAddress palette)
         cached.palette_data = palette_data;
         cached.palette_common = palette_common;
         cached.palette_hash = paletted && palette != 0 ? SampleHash(palette_data & kPhysicalMask, palette_bytes) : 0;
+        UploadTiming timing;
+        const bool detail = profile::SlowFrameDetailEnabled();
         const auto started = std::chrono::steady_clock::now();
-        if (!Upload(header, &cached))
+        const bool ok = Upload(header, &cached, detail ? &timing : nullptr);
+        if (!ok)
         {
             cached.bound.kind = SamplerKind::kNone;
         }
         profile::CountTextureUpload(cached.gl_bytes, std::chrono::steady_clock::now() - started);
+        if (detail && ok)
+        {
+            profile::NoteTextureUpload(header, format, width0, height0, cached.bound.levels, cached.gl_bytes, reason,
+                                       same_size, timing.decode_time, timing.gl_time);
+        }
     }
     return cached.bound.kind == SamplerKind::kNone ? BoundTexture{} : cached.bound;
 }

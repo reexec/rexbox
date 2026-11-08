@@ -61,6 +61,31 @@ public:
     ScopedWait& operator=(const ScopedWait&) = delete;
 };
 
+// Totals of the calling thread's outermost waits and file reads since the last
+// TakeWaitTotals().
+struct WaitTotals
+{
+    uint64_t wait_ns = 0;
+    uint32_t wait_count = 0;
+    uint64_t longest_wait_ns = 0;
+    const char* longest_what = nullptr;
+    uint32_t read_count = 0;
+    uint64_t read_bytes = 0;
+    uint64_t read_ns = 0;
+};
+
+// Turns on per-thread wait totals. Once on they stay on.
+void EnableWaitTotals();
+
+// Whether wait totals are enabled.
+bool WaitTotalsEnabled();
+
+// Records a file read of `bytes` taking `ns` nanoseconds.
+void NoteFileRead(uint64_t bytes, uint64_t ns);
+
+// Returns and resets the calling thread's wait totals.
+WaitTotals TakeWaitTotals();
+
 // A frame was presented.
 void NotePresent(uint32_t frame);
 

@@ -361,6 +361,7 @@ struct WarmProgram
 {
     GLuint program = 0;
     uint64_t check = 0;
+    std::chrono::steady_clock::duration made_time{};
 };
 
 // Programs made ahead, by entry file name, and a running average of the GL
@@ -371,7 +372,9 @@ std::chrono::steady_clock::duration g_warm_typical = std::chrono::milliseconds(1
 
 }  // namespace
 
-uint32_t LoadCachedProgram(const std::string& vertex_source, const std::string& fragment_source)
+uint32_t LoadCachedProgram(const std::string& vertex_source, const std::string& fragment_source,
+                           profile::ProgramOrigin* origin,
+                           std::chrono::steady_clock::duration* made_time)
 {
     if (!ProgramCacheEnabled())
     {
@@ -386,6 +389,14 @@ uint32_t LoadCachedProgram(const std::string& vertex_source, const std::string& 
         if (warm.check == SourceCheck(vertex_source, fragment_source))
         {
             program = warm.program;
+            if (origin != nullptr)
+            {
+                *origin = profile::ProgramOrigin::kWarmed;
+            }
+            if (made_time != nullptr)
+            {
+                *made_time = warm.made_time;
+            }
         }
         else
         {
@@ -394,6 +405,7 @@ uint32_t LoadCachedProgram(const std::string& vertex_source, const std::string& 
     }
     if (program == 0)
     {
+        const auto read_started = std::chrono::steady_clock::now();
         std::vector<char> data;
         Entry entry;
         if (!ReadFile(path, &data) || !ParseEntry(data, &entry) || entry.vertex_size != vertex_source.size() ||
@@ -404,6 +416,17 @@ uint32_t LoadCachedProgram(const std::string& vertex_source, const std::string& 
             return 0;
         }
         program = MakeProgram(entry.format, entry.binary, entry.binary_size);  // 0: refused; compiled instead
+        if (program != 0)
+        {
+            if (origin != nullptr)
+            {
+                *origin = profile::ProgramOrigin::kBinaryCache;
+            }
+            if (made_time != nullptr)
+            {
+                *made_time = std::chrono::steady_clock::now() - read_started;
+            }
+        }
     }
     if (program != 0 && g_reader != nullptr)
     {
@@ -449,11 +472,11 @@ void WarmProgramCache(std::chrono::steady_clock::time_point deadline)
         {
             program = MakeProgram(entry.format, entry.binary.data(), entry.binary.size());
         }
+        const Clock::duration elapsed = Clock::now() - started;
         if (program != 0)
         {
-            g_warm[entry.name] = WarmProgram{program, entry.check};
+            g_warm[entry.name] = WarmProgram{program, entry.check, elapsed};
         }
-        const Clock::duration elapsed = Clock::now() - started;
         g_warm_typical += (std::min(elapsed, Clock::duration(std::chrono::milliseconds(10))) - g_warm_typical) / 8;
         profile::CountProgramWarm(program != 0, elapsed);
     }
