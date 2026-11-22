@@ -9,18 +9,22 @@
 #include "rexbox/runtime/environment.h"
 #include "rexbox/runtime/guest_cpu.h"
 #include "rexbox/runtime/guest_heap.h"
+#include "rexbox/runtime/guest_lock.h"
 #include "rexbox/runtime/guest_memory.h"
 #include "rexbox/runtime/hle_registry.h"
 #include "rexbox/runtime/kernel_thunks.h"
 
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
 #include <iterator>
+#include <mutex>
 #include <string>
 #include <thread>
 
@@ -720,6 +724,88 @@ void ProbeTimers()
     Call("KeRemoveQueueDpc", {dpc});
 }
 
+// Guest locks and rexbox_guest_wait_begin/end (issue #87): while the holder
+// announces a non-kernel wait, another thread can enter and leave the lock
+// without hitting the timeout; after wait_end the holder owns it again.
+void ProbeGuestWait()
+{
+    static RexboxGuestLock lock = {"probe guest wait", nullptr};
+    std::mutex sync_mutex;
+    std::condition_variable sync_cv;
+    bool a_in_wait = false;
+    bool b_first_done = false;
+    bool a_ended_wait = false;
+    bool b_about_to_reenter = false;
+    std::atomic<bool> b_second_entered{false};
+    int64_t b_first_ms = -1;
+    int64_t b_second_ms = -1;
+
+    std::thread thread_b([&] {
+        {
+            std::unique_lock<std::mutex> guard(sync_mutex);
+            sync_cv.wait(guard, [&] { return a_in_wait; });
+        }
+        const auto first_start = std::chrono::steady_clock::now();
+        rexbox_guest_lock_enter(&lock);
+        b_first_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         std::chrono::steady_clock::now() - first_start)
+                         .count();
+        rexbox_guest_lock_leave(&lock);
+        {
+            std::lock_guard<std::mutex> guard(sync_mutex);
+            b_first_done = true;
+        }
+        sync_cv.notify_one();
+
+        {
+            std::unique_lock<std::mutex> guard(sync_mutex);
+            sync_cv.wait(guard, [&] { return a_ended_wait; });
+            b_about_to_reenter = true;
+        }
+        sync_cv.notify_one();
+
+        const auto second_start = std::chrono::steady_clock::now();
+        rexbox_guest_lock_enter(&lock);
+        b_second_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - second_start)
+                          .count();
+        b_second_entered.store(true, std::memory_order_release);
+        rexbox_guest_lock_leave(&lock);
+    });
+
+    rexbox_guest_lock_enter(&lock);
+    rexbox_guest_wait_begin("probe guest wait");
+    {
+        std::lock_guard<std::mutex> guard(sync_mutex);
+        a_in_wait = true;
+    }
+    sync_cv.notify_one();
+    {
+        std::unique_lock<std::mutex> guard(sync_mutex);
+        sync_cv.wait(guard, [&] { return b_first_done; });
+    }
+    rexbox_guest_wait_end();
+    {
+        std::lock_guard<std::mutex> guard(sync_mutex);
+        a_ended_wait = true;
+    }
+    sync_cv.notify_one();
+    {
+        std::unique_lock<std::mutex> guard(sync_mutex);
+        sync_cv.wait(guard, [&] { return b_about_to_reenter; });
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    const bool blocked_while_held = !b_second_entered.load(std::memory_order_acquire);
+    rexbox_guest_lock_leave(&lock);
+    thread_b.join();
+
+    Check(b_first_ms >= 0 && b_first_ms < 500,
+          "another thread enters a guest lock during rexbox_guest_wait_begin without timing out");
+    Check(blocked_while_held, "after rexbox_guest_wait_end the holder owns the lock again");
+    Check(b_second_entered.load(std::memory_order_acquire) && b_second_ms >= 0 && b_second_ms < 500,
+          "the other thread enters once the holder leaves");
+}
+
 int main()
 {
     rexbox::runtime::GuestMemory memory;
@@ -754,6 +840,7 @@ int main()
     ProbeGuestWindow();
     ProbeTimers();
     ProbeImageFileName();
+    ProbeGuestWait();
 
     std::printf("%d check(s), %d failure(s)\n", g_checks, g_failures);
     std::fflush(stdout);

@@ -158,6 +158,16 @@ extern "C" void rexbox_guest_lock_leave(RexboxGuestLock* lock)
     }
 }
 
+extern "C" void rexbox_guest_wait_begin(const char* what)
+{
+    rexbox::runtime::NoteWaitBegin(what, nullptr, 0, false, -1);
+}
+
+extern "C" void rexbox_guest_wait_end(void)
+{
+    rexbox::runtime::NoteWaitEnd();
+}
+
 namespace rexbox::runtime
 {
 
