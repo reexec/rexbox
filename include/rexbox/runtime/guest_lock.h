@@ -33,6 +33,12 @@ typedef struct RexboxGuestLock
 void rexbox_guest_lock_enter(RexboxGuestLock* lock);
 void rexbox_guest_lock_leave(RexboxGuestLock* lock);
 
+/* The calling thread waits for another guest thread in a way that is not a
+ * kernel wait (a spin on a flag, say). Its guest locks are put down until
+ * rexbox_guest_wait_end, and the stall report shows `what` (static storage). */
+void rexbox_guest_wait_begin(const char* what);
+void rexbox_guest_wait_end(void);
+
 #ifdef __cplusplus
 }
 
