@@ -149,6 +149,7 @@ bool LoadGlFunctions(GlFunctions* functions, std::string* missing)
     need(Load<__LINE__>(&f.DeleteShader, "glDeleteShader", &first_missing));
     need(Load<__LINE__>(&f.CreateProgram, "glCreateProgram", &first_missing));
     need(Load<__LINE__>(&f.AttachShader, "glAttachShader", &first_missing));
+    need(Load<__LINE__>(&f.BindAttribLocation, "glBindAttribLocation", &first_missing));
     need(Load<__LINE__>(&f.LinkProgram, "glLinkProgram", &first_missing));
     need(Load<__LINE__>(&f.GetProgramiv, "glGetProgramiv", &first_missing));
     need(Load<__LINE__>(&f.GetProgramInfoLog, "glGetProgramInfoLog", &first_missing));

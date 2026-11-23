@@ -3,6 +3,7 @@
 #include "d3d8_display_state.h"
 #include "d3d8_gl.h"
 #include "d3d8_internal.h"
+#include "d3d8_post_process.h"
 #include "d3d8_resource.h"
 #include "d3d8_smaa.h"
 #include "d3d8_trace.h"
@@ -515,6 +516,11 @@ struct RampPresenter
     GLuint program = 0;
     GLuint vertex_array = 0;
     GLuint ramp_texture = 0;
+    // Intermediate target when a non-identity gamma ramp feeds a post shader.
+    GLuint intermediate_framebuffer = 0;
+    GLuint intermediate_texture = 0;
+    uint32_t intermediate_width = 0;
+    uint32_t intermediate_height = 0;
 };
 
 RampPresenter g_ramp_presenter;
@@ -616,6 +622,50 @@ bool DrawThroughRamp(GLuint texture, const GammaRamp& ramp, GLint x, GLint y, ui
     gl.BindVertexArray(p.vertex_array);
     gl.DrawArrays(kGlTriangles, 0, 3);
     return true;
+}
+
+// Draws `texture` through `ramp` into an intermediate RGBA8 texture of size
+// (width, height), returning that texture (or 0 on failure) for a post shader.
+GLuint DrawRampToTexture(GLuint texture, const GammaRamp& ramp, uint32_t width, uint32_t height)
+{
+    RampPresenter& p = g_ramp_presenter;
+    GlFunctions& gl = Gl();
+    if (p.intermediate_framebuffer == 0 || p.intermediate_width != width || p.intermediate_height != height)
+    {
+        if (p.intermediate_texture == 0)
+        {
+            gl.GenTextures(1, &p.intermediate_texture);
+        }
+        if (p.intermediate_framebuffer == 0)
+        {
+            gl.GenFramebuffers(1, &p.intermediate_framebuffer);
+        }
+        gl.BindTexture(kGlTexture2D, p.intermediate_texture);
+        gl.TexImage2D(kGlTexture2D, 0, static_cast<GLint>(kGlRgba8), static_cast<GLsizei>(width),
+                      static_cast<GLsizei>(height), 0, kGlRgba, kGlUnsignedByte, nullptr);
+        gl.TexParameteri(kGlTexture2D, kGlTextureMinFilter, static_cast<GLint>(kGlLinear));
+        gl.TexParameteri(kGlTexture2D, kGlTextureMagFilter, static_cast<GLint>(kGlLinear));
+        gl.TexParameteri(kGlTexture2D, kGlTextureWrapS, static_cast<GLint>(kGlClampToEdge));
+        gl.TexParameteri(kGlTexture2D, kGlTextureWrapT, static_cast<GLint>(kGlClampToEdge));
+        gl.TexParameteri(kGlTexture2D, kGlTextureMaxLevel, 0);
+        gl.BindFramebuffer(kGlFramebuffer, p.intermediate_framebuffer);
+        gl.FramebufferTexture2D(kGlFramebuffer, kGlColorAttachment0, kGlTexture2D, p.intermediate_texture, 0);
+        if (gl.CheckFramebufferStatus(kGlFramebuffer) != kGlFramebufferComplete)
+        {
+            gl.BindFramebuffer(kGlFramebuffer, 0);
+            return 0;
+        }
+        p.intermediate_width = width;
+        p.intermediate_height = height;
+    }
+    gl.BindFramebuffer(kGlDrawFramebuffer, p.intermediate_framebuffer);
+    if (!DrawThroughRamp(texture, ramp, 0, 0, width, height))
+    {
+        gl.BindFramebuffer(kGlDrawFramebuffer, 0);
+        return 0;
+    }
+    gl.BindFramebuffer(kGlDrawFramebuffer, 0);
+    return p.intermediate_texture;
 }
 
 void WriteLittleEndian(std::vector<uint8_t>* out, uint32_t value, int bytes)
@@ -861,7 +911,34 @@ void PresentRenderTarget(GuestAddress color, const GammaRamp& ramp)
     gl.ColorMask(1, 1, 1, 1);
     gl.ClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     gl.Clear(kGlColorBufferBit);
-    if (ramp.IsIdentity() || !DrawThroughRamp(picture_texture, ramp, x, y, width, height))
+
+    D3d8PostProcess& post = EnsurePostProcessInitialized();
+    bool shaded = false;
+    if (post.active())
+    {
+        const uint32_t input_width = GlWidth(source);
+        const uint32_t input_height = source.height * source.scale;
+        GLuint shader_input = picture_texture;
+        if (!ramp.IsIdentity())
+        {
+            const GLuint ramped = DrawRampToTexture(picture_texture, ramp, input_width, input_height);
+            if (ramped != 0)
+            {
+                shader_input = ramped;
+            }
+        }
+        if (post.UseForPresent(shader_input, input_width, input_height, picture_width, source.height,
+                               x, y, width, height, false))
+        {
+            post.DrawLastQuad();
+            shaded = true;
+        }
+        InvalidateGlStateCache();
+        gl.BindFramebuffer(kGlFramebuffer, 0);
+        gl.BindFramebuffer(kGlReadFramebuffer, picture_framebuffer);
+        gl.BindFramebuffer(kGlDrawFramebuffer, 0);
+    }
+    if (!shaded && (ramp.IsIdentity() || !DrawThroughRamp(picture_texture, ramp, x, y, width, height)))
     {
         gl.BlitFramebuffer(0, 0, static_cast<GLint>(GlWidth(source)),
                            static_cast<GLint>(source.height * source.scale), x, y, x + static_cast<GLint>(width),
