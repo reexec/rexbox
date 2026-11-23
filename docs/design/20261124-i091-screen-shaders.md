@@ -1,6 +1,6 @@
 # 설계: 표시 단계 화면 셰이더(libretro GLSL) (issue #91)
 
-상태: 설계. 소비자: reexec/reEXCEED#20. 참고 구현: reexec/repsp v0.0.24(#50, reexec/reDMP1 설계 i049), 그 원본 re2DJ v0.0.75.
+상태: 구현됨(`d2a3b19`). 소비자: reexec/reEXCEED#20. 참고 구현: reexec/repsp v0.0.24(#50, reexec/reDMP1 설계 i049), 그 원본 re2DJ v0.0.75.
 
 ## 1. 요구사항
 
@@ -84,7 +84,7 @@ repsp `PostShaderControl`과 같은 기능을 `rexbox::hle::d3d8` 네임스페�
 
 # Design: screen shaders (libretro GLSL) at presentation (issue #91)
 
-Status: design. Consumer: reexec/reEXCEED#20. Reference: reexec/repsp v0.0.24 (#50, reexec/reDMP1 design i049), from re2DJ v0.0.75.
+Status: implemented (`d2a3b19`). Consumer: reexec/reEXCEED#20. Reference: reexec/repsp v0.0.24 (#50, reexec/reDMP1 design i049), from re2DJ v0.0.75.
 
 ## 1. Requirements
 
