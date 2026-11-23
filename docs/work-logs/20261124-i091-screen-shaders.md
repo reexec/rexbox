@@ -25,7 +25,7 @@
 | `rexbox_post_shader_probe` | 93 checks, 0 failures(내장 5종 3.3 core 컴파일, 2 pass, 깨진 셰이더 `none` 복귀, 주사선, 위아래) |
 | reEXCEED 실행 `--post-shader crt`/`none` | 타이틀 화면에 CRT(주사선·비네트·곡률)가 똑바로 적용되고 오버레이는 셰이더 밖, 60 fps. `none`은 이전과 같다 |
 
-남은 확인(사용자): 다른 내장 셰이더, 16:9, 렌더 배율, MSAA·SMAA, 감마 램프 조합.
+사용자 확인(2026-11-24): 창에서 셰이더가 잘 동작한다.
 
 ---
 
@@ -60,4 +60,4 @@ Design and work order: [design](../design/20261124-i091-screen-shaders.md), [wor
   * `crt` shades the title screen upright (scanlines, vignette, curvature), the overlay stays unshaded, and it holds 60 fps.
   * `none` looks as before.
 
-Left for the user: the other built-ins, 16:9, the render scale, MSAA and SMAA, and the gamma ramp.
+User check (2026-11-24): the shaders work well in the window.
