@@ -4,6 +4,7 @@
 
 * [Win32 개발 환경 준비와 단독 빌드](win32-setup-and-build.md)
 * [Linux 개발 환경 준비와 단독 빌드](linux-setup-and-build.md)
+* [표시 단계 화면 셰이더 작성·사용 안내](post-process-shaders.md)
 
 ---
 
@@ -13,3 +14,4 @@ Repeatable setup, build and verification procedures the user runs. Each guide li
 
 * [Win32 development setup and standalone build](win32-setup-and-build.md)
 * [Linux development setup and standalone build](linux-setup-and-build.md)
+* [Presentation screen shaders guide](post-process-shaders.md)

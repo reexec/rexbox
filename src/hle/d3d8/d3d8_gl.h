@@ -111,6 +111,7 @@ constexpr GLenum kGlTextureCubeMapPositiveX = 0x8515;
 constexpr GLenum kGlTexture0 = 0x84C0;
 constexpr GLenum kGlRgba = 0x1908;
 constexpr GLenum kGlRgba8 = 0x8058;
+constexpr GLenum kGlRgba16f = 0x881A;
 constexpr GLenum kGlDepthStencil = 0x84F9;
 constexpr GLenum kGlDepth24Stencil8 = 0x88F0;
 constexpr GLenum kGlUnpackAlignment = 0x0CF5;
@@ -191,6 +192,7 @@ struct GlFunctions
     void(REXBOX_GL_APIENTRY* DeleteShader)(GLuint shader) = nullptr;
     GLuint(REXBOX_GL_APIENTRY* CreateProgram)() = nullptr;
     void(REXBOX_GL_APIENTRY* AttachShader)(GLuint program, GLuint shader) = nullptr;
+    void(REXBOX_GL_APIENTRY* BindAttribLocation)(GLuint program, GLuint index, const GLchar* name) = nullptr;
     void(REXBOX_GL_APIENTRY* LinkProgram)(GLuint program) = nullptr;
     void(REXBOX_GL_APIENTRY* GetProgramiv)(GLuint program, GLenum pname, GLint* params) = nullptr;
     void(REXBOX_GL_APIENTRY* GetProgramInfoLog)(GLuint program, GLsizei max_length, GLsizei* length,

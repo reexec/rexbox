@@ -37,6 +37,13 @@ target_link_libraries(rexbox_d3d8_probe PRIVATE rexbox_hle_d3d8)
 target_include_directories(rexbox_d3d8_probe PRIVATE ${rexbox_SOURCE_DIR}/src/hle/d3d8)
 rexbox_strict_warnings(rexbox_d3d8_probe)
 
+# Presentation post-processing shader checks (GL-free catalog/preset/source
+# checks plus hidden-window GL compile/chain/row-order checks when available).
+add_executable(rexbox_post_shader_probe post_shader_probe/main.cpp)
+target_link_libraries(rexbox_post_shader_probe PRIVATE rexbox_hle_d3d8)
+target_include_directories(rexbox_post_shader_probe PRIVATE ${rexbox_SOURCE_DIR}/src/hle/d3d8)
+rexbox_strict_warnings(rexbox_post_shader_probe)
+
 # The recompiled-code adapter in a title with no generated code (run in CI):
 # the probe is the title and its application at once, linked through
 # rexbox_add_recompiled_library with an empty GEN_DIR, so the register
@@ -55,3 +62,4 @@ add_test(NAME rexbox_recomp_probe COMMAND rexbox_recomp_probe)
 add_test(NAME rexbox_kernel_probe COMMAND rexbox_kernel_probe)
 add_test(NAME rexbox_dsound_probe COMMAND rexbox_dsound_probe)
 add_test(NAME rexbox_d3d8_probe COMMAND rexbox_d3d8_probe)
+add_test(NAME rexbox_post_shader_probe COMMAND rexbox_post_shader_probe)

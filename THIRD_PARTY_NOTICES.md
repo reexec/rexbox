@@ -130,3 +130,42 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
+
+## Screen Shaders (re2DJ, AMD FSR 1.0, ScaleFX, Anime4K)
+
+* 포함 위치 / Location: `include/rexbox/hle/d3d8/{d3d8_post_shader,post_shader_*}.h`, `src/hle/d3d8/post_shader_*.cpp`, `src/hle/d3d8/d3d8_post_process.{h,cpp}`, `src/hle/d3d8/post_shaders/`.
+* **re2DJ** (BSD 3-Clause): 화면 셰이더 로더, 프리셋 파서, 소스 조립, GL 패스 및 내장 `crt.glsl`·`scanline.glsl`은 re2DJ v0.0.75에서 옮겼다(reexec/repsp v0.0.24를 거쳐 GL 3.3 Core와 `LogicalSize`에 맞춤). 전문은 아래. / The screen shader loader, preset parser, source assembly, GL pass and built-in `crt.glsl` and `scanline.glsl` are adapted from re2DJ v0.0.75 (via reexec/repsp v0.0.24 for GL 3.3 Core and `LogicalSize`). Full text below.
+* **AMD FidelityFX Super Resolution 1.0** (MIT, Copyright (c) 2021 Advanced Micro Devices, Inc.): `post_shaders/fsr/`의 EASU·RCAS 알고리즘(re2DJ 이식본). 각 파일에 고지 유지; [원본 라이선스](https://github.com/GPUOpen-Effects/FidelityFX-FSR/blob/master/license.txt). / The EASU and RCAS algorithms in `post_shaders/fsr/`, as ported by re2DJ. Notice in each file; [upstream license](https://github.com/GPUOpen-Effects/FidelityFX-FSR/blob/master/license.txt).
+* **ScaleFX** by Sp00kyFox (MIT, Copyright (c) 2016 Sp00kyFox): `post_shaders/scalefx/`의 5패스(libretro glsl-shaders, re2DJ 수록본). 각 파일에 고지 유지; [원본](https://github.com/libretro/glsl-shaders/tree/master/edge-smoothing/scalefx). / The five passes in `post_shaders/scalefx/`, from libretro glsl-shaders as re2DJ has them. Notice in each file; [upstream](https://github.com/libretro/glsl-shaders/tree/master/edge-smoothing/scalefx).
+* **Anime4K** by bloc97 (MIT, Copyright (c) 2019-2021 bloc97): `post_shaders/anime4k/`의 Upscale CNN x2 (S) 가중치(re2DJ 변환본). 각 파일에 고지 유지; [원본 라이선스](https://github.com/bloc97/Anime4K/blob/master/LICENSE). / The Upscale CNN x2 (S) weights in `post_shaders/anime4k/`, as converted by re2DJ. Notice in each file; [upstream license](https://github.com/bloc97/Anime4K/blob/master/LICENSE).
+
+```text
+BSD 3-Clause License
+
+Copyright (c) 2026, re2DJ contributors
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+```
