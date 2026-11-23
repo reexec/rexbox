@@ -1,5 +1,6 @@
 #include "rexbox/runtime/thread_activity.h"
 
+#include "rexbox/platform/display.h"
 #include "rexbox/platform/stack_report.h"
 #include "rexbox/runtime/environment.h"
 #include "rexbox/runtime/guest_lock.h"
@@ -291,7 +292,13 @@ void Monitor(int64_t threshold_ns)
     {
         std::this_thread::sleep_for(kCoarseTick);
         g_coarse_now_ns.store(NowNs(), std::memory_order_relaxed);
-        if (tick % kTicksPerCheck != 0)
+        // F10 (issue #89): printed here, off the event pump and every guest
+        // thread, so a hung guest thread cannot hold the report back.
+        if (platform::ConsumeThreadReportRequest())
+        {
+            ReportGuestThreads("[threads]", "F10 pressed");
+        }
+        if (threshold_ns <= 0 || tick % kTicksPerCheck != 0)
         {
             continue;
         }
@@ -458,12 +465,10 @@ void StartStallMonitor()
 {
     const char* setting = std::getenv("REXBOX_STALL_REPORT");
     const double seconds = setting != nullptr ? std::atof(setting) : 10.0;
-    if (seconds <= 0.0)
-    {
-        return;
-    }
+    // The monitor runs either way: 0 or less turns off only the no-present
+    // report, and F10's report still prints (issue #89).
     g_coarse_now_ns.store(NowNs(), std::memory_order_relaxed);
-    std::thread(Monitor, static_cast<int64_t>(seconds * 1e9)).detach();
+    std::thread(Monitor, seconds > 0.0 ? static_cast<int64_t>(seconds * 1e9) : int64_t{0}).detach();
 }
 
 }  // namespace rexbox::runtime

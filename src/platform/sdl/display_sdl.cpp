@@ -57,6 +57,7 @@ struct SdlDisplay
 std::mutex g_mutex;
 SdlDisplay g_display;
 std::atomic<bool> g_capture_requested{false};
+std::atomic<bool> g_thread_report_requested{false};
 std::atomic<uint32_t> g_render_scale_requested{0};
 std::string g_title;  // SetDisplayTitle; outlives the display
 
@@ -417,6 +418,10 @@ void PumpDisplayEvents(bool* close_requested)
         {
             g_capture_requested.store(true);
         }
+        else if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.key == SDLK_F10)
+        {
+            g_thread_report_requested.store(true);
+        }
         else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT &&
                  event.button.clicks == 2)
         {
@@ -584,6 +589,11 @@ bool DisplayIsEs()
 bool ConsumeCaptureRequest()
 {
     return g_capture_requested.exchange(false);
+}
+
+bool ConsumeThreadReportRequest()
+{
+    return g_thread_report_requested.exchange(false);
 }
 
 uint32_t ConsumeRenderScaleRequest()

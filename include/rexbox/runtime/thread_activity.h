@@ -7,6 +7,8 @@
 // off) it prints one line per guest thread to stderr, once per stall, with
 // return addresses guessed from the guest stack at its last HLE call; with
 // REXBOX_STALL_DUMP=<file> it also writes the guest address space there.
+// The same thread prints the report once each time the user presses F10 in
+// the window (issue #89, docs/design/20261123-i089-thread-report-key.md).
 //
 // Every note is a few relaxed stores into the calling thread's own record, so
 // they are cheap enough to stay on in normal runs.
@@ -99,7 +101,8 @@ void SetWaitObjectDescriber(WaitObjectDescriber describer);
 using ThreadDescriber = std::string (*)(uint32_t guest_id);
 void SetThreadDescriber(ThreadDescriber describer);
 
-// Starts the monitor thread unless REXBOX_STALL_REPORT=0.
+// Starts the monitor thread. REXBOX_STALL_REPORT=0 turns off only the
+// no-present report; F10's report stays (issue #89).
 void StartStallMonitor();
 
 }  // namespace rexbox::runtime

@@ -96,6 +96,10 @@ void PumpDisplayEvents(bool* close_requested);
 // caller decides what to capture). Seen by PumpDisplayEvents.
 bool ConsumeCaptureRequest();
 
+// True once after the user pressed F10 (a request for the guest thread
+// report, issue #89). Seen by PumpDisplayEvents.
+bool ConsumeThreadReportRequest();
+
 // Borderless fullscreen at the desktop resolution, as the double click and
 // Alt+Enter toggle it. Call on the thread that pumps events.
 void SetFullscreen(bool fullscreen);
